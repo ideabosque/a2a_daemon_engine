@@ -1,0 +1,12 @@
+[
+  {
+    "username": "admin",
+    "password_hash": "$2b$12$LqGHXr8tKJ5z5z5z5z5z5uO5z5z5z5z5z5z5z5z5z5z5z5z5z5z5",
+    "roles": ["admin", "user"]
+  },
+  {
+    "username": "testuser",
+    "password_hash": "$2b$12$ExampleHashExampleHashExampleHashExampleHashExampleHash",  
+    "roles": ["user"]
+  }
+]

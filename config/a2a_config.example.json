@@ -1,0 +1,40 @@
+{
+  "agents": [
+    {
+      "agent_id": "agent_001",
+      "agent_name": "Task Processor Agent",
+      "capabilities": ["data_processing", "analysis", "reporting"],
+      "endpoint": "http://localhost:8001/a2a",
+      "status": "active"
+    },
+    {
+      "agent_id": "agent_002",
+      "agent_name": "Coordinator Agent",
+      "capabilities": ["task_routing", "coordination", "monitoring"],
+      "endpoint": "http://localhost:8001/a2a",
+      "status": "active"
+    }
+  ],
+  "tasks": [
+    {
+      "type": "data-processing",
+      "agents": ["agent_001"],
+      "priority": "high",
+      "retry_policy": {
+        "max_attempts": 3,
+        "backoff": "exponential"
+      }
+    },
+    {
+      "type": "coordination",
+      "agents": ["agent_002"],
+      "priority": "medium"
+    }
+  ],
+  "settings": {
+    "discovery_enabled": true,
+    "max_concurrent_tasks": 10,
+    "message_retention_days": 7,
+    "task_timeout_seconds": 300
+  }
+}
