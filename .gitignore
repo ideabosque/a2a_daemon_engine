@@ -210,3 +210,4 @@ __marimo__/
 test_data.json
 .claude
 .zed
+pytest-cache-*/
