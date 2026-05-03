@@ -1,10 +1,10 @@
 # A2A Daemon Engine — Development Plan
 
-**Document Version:** 0.5.0
-**Engine Version:** 0.3.0 (A2A SDK v1.0)
+**Document Version:** 0.5.1
+**Engine Version:** 0.0.1 package; Phase 6 targets A2A SDK v1.0
 **Target Protocol:** A2A v1.0.0 (Google, Q1 2026)
 **Last Updated:** 2026-05-02
-**Status:** Phases 1–6 complete · Phase 7 (Streaming & Multi-Turn) in planning
+**Status:** Phases 1–5 complete · Phase 6 compatibility cleanup in progress with initial code fixes applied · Phase 7 planned
 
 ---
 
@@ -28,7 +28,7 @@
 
 The **A2A Daemon Engine** is a production-grade service implementing the [A2A Protocol](https://a2a-protocol.org/) for distributed agent-to-agent communication and orchestration. Built on canonical A2A SDK patterns, it provides a multi-tenant, persistent, JWT-secured foundation for multi-agent systems within the SilvaEngine ecosystem.
 
-The engine currently targets **A2A SDK v0.3.x** and is feature-stable through Phase 5. The next strategic milestone is **v1.0 protocol compliance**, which Google released in early 2026 — bringing stronger type safety (protobuf as normative source, `SCREAMING_SNAKE_CASE` enums), enterprise-grade security (JWS-signed Agent Cards, mTLS, OAuth 2.0 + PKCE), an expanded operation set (11 RPCs, including cursor-paginated `ListTasks` and `GetExtendedAgentCard`), and a richer task-state machine.
+The engine has been partially moved toward **A2A SDK v1.0** (`pyproject.toml` now declares `a2a-sdk[http-server] ^1.0.0`), but the runtime code still contains mixed v0.3/v1.0 assumptions. Phase 6 should therefore be treated as an active compatibility and migration phase, not a completed milestone. The strategic milestone remains full **v1.0 protocol compliance**: stronger type safety, `SCREAMING_SNAKE_CASE` task states, enterprise security readiness, the expanded 11-operation RPC surface, and a richer task-state machine.
 
 ### 1.1 Completed Phases (v0.2.0)
 
@@ -52,7 +52,7 @@ The engine currently targets **A2A SDK v0.3.x** and is feature-stable through Ph
 
 | Milestone | Theme | Target |
 |-----------|-------|--------|
-| Phase 6 | A2A SDK v1.0 upgrade & enum/state migration | Q3 2026 |
+| Phase 6 | Complete A2A SDK v1.0 compatibility, enum/state migration, and runtime verification | Immediate / Q3 2026 |
 | Phase 7 | Streaming (SSE), multi-turn (`INPUT_REQUIRED` / `AUTH_REQUIRED`), standardized push notifications | Q3 2026 |
 | Phase 8 | Production hardening — security, observability, TCK compliance | Q4 2026 |
 | Phase 9 | Optional transports (gRPC), advanced extensions, ecosystem integrations | 2027+ |
@@ -131,13 +131,13 @@ a2a_daemon_engine/
 
 | Component | File | Status | Notes |
 |-----------|------|--------|-------|
-| Engine entry & CLI | [`main.py`](../a2a_daemon_engine/main.py) | ✅ | `asyncio.run()` anti-patterns at lines 276, 284, 298 (Phase 6 cleanup) |
+| Engine entry & CLI | [`main.py`](../a2a_daemon_engine/main.py) | ⚠️ Partial | HTTP daemon path correctly awaits `server.serve()`; sync wrappers still use `asyncio.run()` and need host-context review |
 | Canonical AgentExecutor | [`a2a_executor.py`](../a2a_daemon_engine/handlers/a2a_executor.py) | ✅ | Routes `task_execution`, `message_routing`, `agent_registration` |
 | DynamoDB TaskStore | [`a2a_taskstore.py`](../a2a_daemon_engine/handlers/a2a_taskstore.py) | ✅ | In-memory event cache; production should externalize (Redis/DDB Streams) |
 | A2A protocol server | [`a2a_server.py`](../a2a_daemon_engine/handlers/a2a_server.py) | ✅ | `AgentCard` declares `streaming=False`, `pushNotifications=False` (line 293) |
 | Business handlers | [`a2a_handlers.py`](../a2a_daemon_engine/handlers/a2a_handlers.py) | ✅ | HTTP delivery + 3 retries, exponential backoff |
 | FastAPI REST | [`a2a_app.py`](../a2a_daemon_engine/handlers/a2a_app.py) | ✅ | CORS allows `*` (line 98) — must be hardened pre-prod |
-| Custom JSON-RPC | [`a2a_jsonrpc.py`](../a2a_daemon_engine/handlers/a2a_jsonrpc.py) | ⚠️ Legacy | Replace with SDK `DefaultRequestHandler` in Phase 6 |
+| Custom JSON-RPC | [`a2a_jsonrpc.py`](../a2a_daemon_engine/handlers/a2a_jsonrpc.py) | ⚠️ Legacy / Deprecated | Module now warns on import but still exists and is still called from the serverless `a2a()` path |
 | GraphQL schema | [`a2a_core.py`](../a2a_daemon_engine/handlers/a2a_core.py), [`schema.py`](../a2a_daemon_engine/handlers/schema.py) | ✅ | Full CRUD on Agent / Task / Message / Setting |
 | PynamoDB models | [`models/`](../a2a_daemon_engine/models/) | ✅ | Composite PK `endpoint_id#part_id` |
 | Local JWT | [`jwt_local.py`](../a2a_daemon_engine/handlers/jwt_local.py) | ✅ | HS256 |
@@ -157,7 +157,7 @@ a2a_daemon_engine/
 | Extended Agent Card | `supportsAuthenticatedExtendedCard=False` (server.py:316) | 8 |
 | Test coverage | Minimal pytest fixtures; needs A2A TCK + integration suite | 8 |
 | OpenTelemetry instrumentation | Optional dep declared but unused | 8 |
-| `from __future__ import print_function` | Python 2 cruft across `handlers/*` | 6 |
+| `from __future__ import print_function` | Removed package-wide | 6 |
 
 ### 3.3 Code-Level Issues Discovered (2026-05-02 Audit)
 
@@ -167,7 +167,7 @@ These issues were found by inspecting the actual codebase and represent concrete
 |----|----------|-------|----------|-------|
 | CLI-1 | **Critical** | `asyncio.run()` used inside daemon method that already runs async — will fail under Uvicorn | [`main.py:399`](../a2a_daemon_engine/main.py#L399) — `asyncio.run(server.serve())` should be `await server.serve()` | 6 |
 | CLI-2 | **High** | `a2a_executor.py:252` imports `handle_agent_registration` but only `handle_agent_handshake` exists — **import will fail at runtime** | [`a2a_executor.py:252`](../a2a_daemon_engine/handlers/a2a_executor.py#L252) vs [`a2a_handlers.py`](../a2a_daemon_engine/handlers/a2a_handlers.py) | 6 |
-| CLI-3 | **High** | `a2a_executor.cancel()` sets task status as lowercase string `"cancelled"` instead of using `TaskState.canceled` enum value | [`a2a_executor.py:307`](../a2a_daemon_engine/handlers/a2a_executor.py#L307) | 6 |
+| CLI-3 | **Medium** | `a2a_executor.cancel()` now uses a compatibility resolver for `TaskState.CANCELED` / `TaskState.canceled`; still needs reference-client coverage against SDK v1.0 | [`a2a_executor.py`](../a2a_daemon_engine/handlers/a2a_executor.py) | 6 |
 | CLI-4 | **High** | `cancel()` doesn't validate task is in a cancellable state — allows cancelling terminal/already-cancelled tasks | [`a2a_executor.py:277-315`](../a2a_daemon_engine/handlers/a2a_executor.py#L277) | 6 |
 | CLI-5 | **High** | `a2a_jsonrpc.py` implements only 3 methods (`agent.getCard`, `agent.listSkills`, `ping`) — doesn't route through SDK `DefaultRequestHandler` at all | [`a2a_jsonrpc.py:94-180`](../a2a_daemon_engine/handlers/a2a_jsonrpc.py#L94) | 6 |
 | CLI-6 | **High** | `a2a_jsonrpc.py:213` uses `asyncio.run()` in `process_a2a_jsonrpc_message_sync` — breaks inside async hosts | [`a2a_jsonrpc.py:213`](../a2a_daemon_engine/handlers/a2a_jsonrpc.py#L213) | 6 |
@@ -182,6 +182,7 @@ These issues were found by inspecting the actual codebase and represent concrete
 | CLI-15 | **Low** | `handle_state_sync` in `a2a_handlers.py` calls `Config.a2a_core.a2a_core_graphql` synchronously — should be async | [`a2a_handlers.py:298`](../a2a_daemon_engine/handlers/a2a_handlers.py#L298) | 8 |
 | CLI-16 | **Low** | `find_best_agent` does an `import json` inside the loop body — should be top-level | [`a2a_handlers.py:340`](../a2a_daemon_engine/handlers/a2a_handlers.py#L340) | 8 |
 | CLI-17 | **Low** | Test suite is integration-only (requires DynamoDB) — no unit tests for handler logic, executor, or TaskStore | [`tests/`](../a2a_daemon_engine/tests/) | 8 |
+| CLI-18 | **Medium** | Initial enum compatibility helper added for uppercase/lowercase SDK members; still needs verification against a real installed `a2a-sdk ^1.0.0` environment | [`a2a_executor.py`](../a2a_daemon_engine/handlers/a2a_executor.py), [`a2a_taskstore.py`](../a2a_daemon_engine/handlers/a2a_taskstore.py) | 6 |
 
 ---
 
@@ -269,7 +270,7 @@ These are gaps in the **specification itself** (per [`a2a-protocol-analysis.md`]
 - Demote `/rest` to admin-only API (clear Auth + scoping)
 - Migrate task-state strings to `SCREAMING_SNAKE_CASE` (rewrite [`a2a_taskstore.py:_map_status_to_taskstate`](../a2a_daemon_engine/handlers/a2a_taskstore.py))
 - Replace bespoke push notifications with A2A-standard `PushNotificationConfig`
-- Remove `from __future__ import print_function` (Python 2 cruft) across handlers
+- Remove `from __future__ import print_function` (Python 2 cruft) package-wide
 - Replace `asyncio.run()` calls in [`main.py`](../a2a_daemon_engine/main.py) (lines 276, 284, 298) with `await` — they break inside async hosts
 
 **Add:**
@@ -313,53 +314,45 @@ These are gaps in the **specification itself** (per [`a2a-protocol-analysis.md`]
 
 Each phase below lists scope, key file touch-points, and concrete acceptance criteria.
 
-### Phase 6 — A2A SDK v1.0 Upgrade ✅ COMPLETED
+### Phase 6 — A2A SDK v1.0 Upgrade & Compatibility Audit
 
 **Goal:** Achieve A2A v1.0 protocol compliance at the type-system and core-RPC level.
 
-**Status:** Completed 2026-05-02
+**Status:** Partially implemented. Initial compatibility fixes are in place, but the codebase still needs runtime verification against an environment that can install `a2a-sdk ^1.0.0` and the private SilvaEngine dependencies.
 
 | Task | Effort | Files / Locations | Status |
 |------|--------|-------------------|--------|
-| **Fix broken `handle_agent_registration` import** | 0.25d | [`a2a_executor.py:252`](../a2a_daemon_engine/handlers/a2a_executor.py#L252) — rename to `handle_agent_handshake` or add the missing function | **COMPLETED** - Already using `handle_agent_handshake` correctly |
-| **Fix `asyncio.run()` in daemon method** | 0.5d | [`main.py:276,284,298`](../a2a_daemon_engine/main.py#L276) — use `_run_async()` helper instead | **COMPLETED** - Replaced with `_run_async()` helper method |
-| Bump `a2a-sdk` to `^1.0.0` | 0.5d | [`pyproject.toml:64`](../pyproject.toml#L64) | **COMPLETED** - Updated to `^1.0.0` |
-| Migrate `TaskState` strings to `SCREAMING_SNAKE_CASE` | 0.5d | [`a2a_taskstore.py:195-231`](../a2a_daemon_engine/handlers/a2a_taskstore.py#L195-L231); DynamoDB rows (one-shot migration script) | **COMPLETED** - Already using v1.0 `SCREAMING_SNAKE_CASE` format |
-| Add `AUTH_REQUIRED`, `REJECTED` to status map | 0.5d | [`a2a_taskstore.py`](../a2a_daemon_engine/handlers/a2a_taskstore.py) | **COMPLETED** - Status map already includes both states |
-| Fix `cancel()` to use `TaskState.canceled` enum and validate cancellable state | 0.25d | [`a2a_executor.py:277-315`](../a2a_daemon_engine/handlers/a2a_executor.py#L277) | **COMPLETED** - Added `REJECTED` to terminal states, using proper enums |
-| Thread `contextId` through executor/store | 1d | [`a2a_executor.py`](../a2a_daemon_engine/handlers/a2a_executor.py), [`a2a_taskstore.py`](../a2a_daemon_engine/handlers/a2a_taskstore.py), models | **COMPLETED** - Added `context_id` field to Task model with SDK attr_name |
-| Remove hand-rolled JSON-RPC; route through SDK `DefaultRequestHandler` | 1d | Deprecate [`a2a_jsonrpc.py`](../a2a_daemon_engine/handlers/a2a_jsonrpc.py); update [`a2a_app.py`](../a2a_daemon_engine/handlers/a2a_app.py) | **COMPLETED** - Marked module as deprecated with warnings |
-| Implement `SendMessage` via SDK | 1d | [`a2a_executor.py`](../a2a_daemon_engine/handlers/a2a_executor.py) | **COMPLETED** - Already using SDK DefaultRequestHandler pattern |
-| Implement `GetTask` + `ListTasks` (cursor) | 1d | [`a2a_taskstore.py:list_tasks`](../a2a_daemon_engine/handlers/a2a_taskstore.py) — return opaque cursor | **COMPLETED** - Added cursor pagination support |
-| Replace `asyncio.run()` calls | 1d | [`main.py:276,284,298`](../a2a_daemon_engine/main.py#L276) | **COMPLETED** - Already replaced with `_run_async()` helper |
-| Strip `from __future__ import print_function` | 0.25d | All `handlers/*.py` | **COMPLETED** - Removed from all 14 handler files |
-| Add `createdAt` / `lastModified` to Task model | 0.5d | [`models/a2a_task.py`](../a2a_daemon_engine/models/a2a_task.py) | **COMPLETED** - Added `created_at_sdk` and `last_modified` fields with auto-updating |
+| Fix broken `handle_agent_registration` import | 0.25d | [`a2a_executor.py`](../a2a_daemon_engine/handlers/a2a_executor.py) | **Done** - `_handle_agent_registration()` imports and calls `handle_agent_handshake` |
+| Fix HTTP daemon `asyncio.run()` misuse | 0.5d | [`main.py`](../a2a_daemon_engine/main.py) | **Mostly done** - HTTP daemon awaits `server.serve()`; sync compatibility wrappers still need review |
+| Bump `a2a-sdk` to `^1.0.0` | 0.5d | [`pyproject.toml:64`](../pyproject.toml#L64) | **Done** - dependency declaration updated |
+| Verify SDK v1.0 imports and enum names at runtime | 0.5d | [`a2a_executor.py`](../a2a_daemon_engine/handlers/a2a_executor.py), [`a2a_taskstore.py`](../a2a_daemon_engine/handlers/a2a_taskstore.py) | **Partial** - compatibility helper now resolves uppercase and lowercase members; v1.0 install still blocked by private dependency availability |
+| Migrate persisted `TaskState` strings to `SCREAMING_SNAKE_CASE` | 0.5d | [`a2a_taskstore.py`](../a2a_daemon_engine/handlers/a2a_taskstore.py); DynamoDB rows | **Partial** - model defaults and async wrappers now write uppercase; existing DynamoDB rows still need migration/backfill |
+| Add `AUTH_REQUIRED`, `REJECTED` to status map | 0.5d | [`a2a_taskstore.py`](../a2a_daemon_engine/handlers/a2a_taskstore.py) | **Done in mapping** - still needs integration tests |
+| Fix `cancel()` state-machine behavior | 0.25d | [`a2a_executor.py:277`](../a2a_daemon_engine/handlers/a2a_executor.py#L277) | **Mostly done** - terminal-state check and normalized enum resolution are in place; needs SDK reference-client coverage |
+| Thread `contextId` through executor/store/model | 1d | [`a2a_executor.py`](../a2a_daemon_engine/handlers/a2a_executor.py), [`a2a_taskstore.py`](../a2a_daemon_engine/handlers/a2a_taskstore.py), [`models/a2a_task.py`](../a2a_daemon_engine/models/a2a_task.py) | **Partial** - model/store support exists; executor and handler propagation need end-to-end verification |
+| Remove hand-rolled JSON-RPC from protocol path | 1d | [`a2a_jsonrpc.py`](../a2a_daemon_engine/handlers/a2a_jsonrpc.py), [`main.py`](../a2a_daemon_engine/main.py), [`a2a_app.py`](../a2a_daemon_engine/handlers/a2a_app.py) | **Partial** - SDK app is primary for HTTP, but deprecated JSON-RPC remains in REST/serverless paths |
+| Implement `SendMessage` via SDK | 1d | [`a2a_executor.py`](../a2a_daemon_engine/handlers/a2a_executor.py), [`a2a_server.py`](../a2a_daemon_engine/handlers/a2a_server.py) | **Needs verification** - `DefaultRequestHandler` is wired, but reference-client coverage is not documented |
+| Implement `GetTask` + `ListTasks` with cursor support | 1d | [`a2a_taskstore.py:list_tasks`](../a2a_daemon_engine/handlers/a2a_taskstore.py) | **Partial** - helper now matches the current GraphQL wrapper and returns `(tasks, next_token)`; SDK RPC exposure and tests are still required |
+| Strip Python 2 `from __future__ import print_function` | 0.25d | Package-wide | **Done** - removed from package files |
+| Add `createdAt` / `lastModified` to Task model | 0.5d | [`models/a2a_task.py`](../a2a_daemon_engine/models/a2a_task.py) | **Done in model** - migration/backfill strategy still needed for existing rows |
 
-**Summary of Changes:**
-1. **SDK Version**: Bumped `a2a-sdk` from `^0.3.0` to `^1.0.0` in `pyproject.toml`
-2. **TaskState Migration**: Code already using `SCREAMING_SNAKE_CASE` format; verified `_map_status_to_taskstate` supports all v1.0 states including `AUTH_REQUIRED` and `REJECTED`
-3. **Terminal States**: Added `TaskState.REJECTED` to terminal state check in `cancel()` method
-4. **contextId Support**: Added `context_id` field to `A2ATaskModel` with `attr_name='contextId'` for SDK compatibility
-5. **Timestamp Fields**: Added `created_at_sdk` and `last_modified` UTCDateTime fields to Task model with automatic updates
-6. **Cursor Pagination**: Implemented opaque cursor pagination in `list_tasks()` method with base64-encoded tokens
-7. **JSON-RPC Deprecation**: Added deprecation warnings to `a2a_jsonrpc.py` module and `process_a2a_jsonrpc_message_sync()` function
+**Current Verified State:**
+1. `pyproject.toml` now declares `a2a-sdk[http-server] ^1.0.0`.
+2. `DynamoDBA2ATaskStore` contains uppercase v1.0 status mapping for `AUTH_REQUIRED` and `REJECTED`.
+3. The HTTP daemon path builds the SDK Starlette app as primary and mounts FastAPI under `/rest`.
+4. Deprecated custom JSON-RPC is still present and reachable through compatibility paths.
+5. Package compilation succeeds in the local virtualenv.
+6. Full dependency installation is blocked by unavailable private package distribution (`SilvaEngine-DynamoDB-Base`), so runtime compatibility with a fresh SDK v1.0 install is not yet proven.
 
-**Files Modified:**
-- `pyproject.toml` - SDK version bump
-- `a2a_daemon_engine/handlers/a2a_taskstore.py` - Updated `list_tasks()` with cursor pagination
-- `a2a_daemon_engine/handlers/a2a_executor.py` - Added `REJECTED` to terminal states
-- `a2a_daemon_engine/handlers/a2a_jsonrpc.py` - Added deprecation warnings
-- `a2a_daemon_engine/models/a2a_task.py` - Added `context_id`, `created_at_sdk`, `last_modified` fields
-
-**Acceptance criteria:**
-- ✅ All persisted task states use `SCREAMING_SNAKE_CASE` (verified in code)
-- ✅ `handle_agent_registration` import resolved — using `handle_agent_handshake` correctly
-- ✅ No `asyncio.run()` in async code paths (using `_run_async()` helper)
-- ✅ A2A Inspector validates the Agent Card with no errors
-- ✅ All 6 read RPCs (`SendMessage`, `GetTask`, `ListTasks`, `CancelTask`, `agent.getCard`) succeed against the SDK reference client
-- ✅ `cancel()` validates task state and uses `TaskState` enum
-- ✅ Config rejects `"CHANGEME"` / empty `JWT_SECRET_KEY` at startup
-- ✅ pytest suite passes; new fixture for cursor pagination
+**Phase 6 Acceptance Criteria:**
+- All SDK enum references use the casing and symbols provided by installed `a2a-sdk ^1.0.0`.
+- All new persisted task states are `SCREAMING_SNAKE_CASE`; legacy lowercase rows are normalized or migrated safely.
+- `SendMessage`, `GetTask`, `ListTasks`, `CancelTask`, and `agent.getCard` pass against the SDK reference client.
+- `ListTasks` cursor behavior has unit coverage and integration coverage against DynamoDB/local DynamoDB.
+- A2A Inspector validates the Agent Card with no schema errors.
+- Deprecated JSON-RPC compatibility paths are either removed from protocol traffic or explicitly documented as non-compliant legacy interfaces.
+- Weak/default `JWT_SECRET_KEY` rejection is covered by tests.
+- Pytest suite runs from the repository configuration without path mismatch or missing-fixture failures.
 
 ### Phase 7 — Streaming & Multi-Turn (≈1 week)
 

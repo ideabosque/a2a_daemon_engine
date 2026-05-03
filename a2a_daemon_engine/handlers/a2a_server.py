@@ -538,7 +538,7 @@ class A2AProtocolServer:
             "partId": part_id,
             "taskType": task_data["task_type"],
             "assignedAgentId": task_data.get("assigned_agent_id"),
-            "status": task_data.get("status", "pending"),
+            "status": task_data.get("status", "SUBMITTED").upper(),
             "priority": task_data.get("priority", "medium"),
             "inputData": input_data_str,
             "updatedBy": task_data.get("updated_by", "a2a_server"),

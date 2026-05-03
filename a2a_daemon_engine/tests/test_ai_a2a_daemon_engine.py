@@ -41,7 +41,7 @@ logger = logging.getLogger()
 from silvaengine_utility import Graphql
 
 # Import test helpers
-from test_helpers import call_method, log_test_result
+from .test_helpers import call_method, log_test_result
 
 # Load test data from JSON file
 _test_data_file = os.path.join(os.path.dirname(__file__), "test_data.json")
@@ -190,7 +190,7 @@ def test_task_lifecycle_flow(
         "partId": part_id,
         "taskType": test_data.get("task_type"),
         "inputData": test_data.get("input_data", {}),
-        "status": test_data.get("status", "pending"),
+        "status": test_data.get("status", "SUBMITTED"),
         "updatedBy": "test-user",
     }
     result, error = call_method(

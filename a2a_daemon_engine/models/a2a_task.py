@@ -1,11 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-from __future__ import print_function
-
 __author__ = "bibow"
 
 import functools
-import logging
 import traceback
 import uuid
 from typing import Any, Dict
@@ -74,7 +71,7 @@ class A2ATaskModel(BaseModel):
     part_id = UnicodeAttribute()
     task_type = UnicodeAttribute()
     assigned_agent_id = UnicodeAttribute(null=True)
-    status = UnicodeAttribute()  # pending, in_progress, completed, failed
+    status = UnicodeAttribute()  # A2A task state, stored as SCREAMING_SNAKE_CASE
     priority = UnicodeAttribute()  # low, medium, high, critical
     input_data = MapAttribute(null=True)
     output_data = MapAttribute(null=True)
@@ -252,7 +249,7 @@ def insert_update_a2a_task(info: ResolveInfo, **kwargs: Dict[str, Any]) -> None:
             "part_id": kwargs["part_id"],
             "task_type": kwargs["task_type"],
             "assigned_agent_id": kwargs.get("assigned_agent_id"),
-            "status": kwargs.get("status", "pending"),
+            "status": kwargs.get("status", "SUBMITTED").upper(),
             "priority": kwargs.get("priority", "medium"),
             "input_data": kwargs.get("input_data", {}),
             "output_data": kwargs.get("output_data", {}),
@@ -294,8 +291,9 @@ def insert_update_a2a_task(info: ResolveInfo, **kwargs: Dict[str, Any]) -> None:
 
     # Handle status change with completion timestamp
     if "status" in kwargs:
-        actions.append(A2ATaskModel.status.set(kwargs["status"]))
-        if kwargs["status"] in ["completed", "failed", "CANCELED", "REJECTED"]:
+        status = kwargs["status"].upper()
+        actions.append(A2ATaskModel.status.set(status))
+        if status in ["COMPLETED", "FAILED", "CANCELED", "REJECTED"]:
             actions.append(A2ATaskModel.completed_at.set(now))
 
     a2a_task.update(actions=actions)

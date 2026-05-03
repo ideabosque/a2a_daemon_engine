@@ -17,21 +17,41 @@ This executor follows the official pattern:
 import logging
 from typing import Any, Optional
 
-# A2A SDK v0.3.0 imports - Based on official samples
+# A2A SDK imports - Based on official samples
 # https://github.com/a2aproject/a2a-samples/blob/main/samples/python/agents/helloworld/agent_executor.py
 # https://github.com/a2aproject/a2a-samples/blob/main/samples/python/agents/travel_planner_agent/agent_executor.py
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.types import (
-    TaskArtifactUpdateEvent,
-    TaskState,
-    TaskStatus,
-    TaskStatusUpdateEvent,
-)
-from a2a.server.context import ServerCallContext
-from a2a.utils import new_agent_text_message, new_text_artifact
+from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
+from a2a.utils import new_agent_text_message
 
 __author__ = "SilvaEngine Team"
+
+
+def _task_state(name: str) -> TaskState:
+    """
+    Resolve TaskState members across SDK enum casing differences.
+
+    A2A v1.0 uses SCREAMING_SNAKE_CASE enum members, while older SDK samples used
+    lowercase names. Prefer the v1.0 member and fall back for compatibility.
+    """
+    if hasattr(TaskState, name):
+        return getattr(TaskState, name)
+    if hasattr(TaskState, name.lower()):
+        return getattr(TaskState, name.lower())
+    aliases = {
+        "AUTH_REQUIRED": "INPUT_REQUIRED",
+        "REJECTED": "FAILED",
+        "SUBMITTED": "WORKING",
+        "UNKNOWN": "WORKING",
+    }
+    alias = aliases.get(name)
+    if alias:
+        if hasattr(TaskState, alias):
+            return getattr(TaskState, alias)
+        if hasattr(TaskState, alias.lower()):
+            return getattr(TaskState, alias.lower())
+    raise AttributeError(f"TaskState has no member for {name}")
 
 
 class A2ADaemonExecutor(AgentExecutor):
@@ -84,7 +104,7 @@ class A2ADaemonExecutor(AgentExecutor):
                 error_msg = "No user input provided in request context"
                 self.logger.error(error_msg)
                 await event_queue.put(
-                    TaskStatusUpdateEvent(state=TaskState.failed, error=error_msg)
+                    TaskStatusUpdateEvent(state=_task_state("FAILED"), error=error_msg)
                 )
                 return
 
@@ -120,13 +140,13 @@ class A2ADaemonExecutor(AgentExecutor):
                 error_msg = f"Unknown operation: {operation}"
                 self.logger.error(error_msg)
                 await event_queue.put(
-                    TaskStatusUpdateEvent(state=TaskState.failed, error=error_msg)
+                    TaskStatusUpdateEvent(state=_task_state("FAILED"), error=error_msg)
                 )
 
         except Exception as e:
             self.logger.error(f"Task execution failed: {e}", exc_info=True)
             await event_queue.put(
-                TaskStatusUpdateEvent(state=TaskState.failed, error=str(e))
+                TaskStatusUpdateEvent(state=_task_state("FAILED"), error=str(e))
             )
 
     async def _handle_task_execution(
@@ -153,7 +173,7 @@ class A2ADaemonExecutor(AgentExecutor):
         self.logger.info(f"Assigning task: {task_data.get('id', 'new')}")
 
         # Emit working status
-        await event_queue.put(TaskStatusUpdateEvent(state=TaskState.working))
+        await event_queue.put(TaskStatusUpdateEvent(state=_task_state("WORKING")))
 
         # Execute task via existing handler
         result = await handle_task_assignment(partition_key, task_data)
@@ -167,7 +187,7 @@ class A2ADaemonExecutor(AgentExecutor):
 
         # Emit completion status
         await event_queue.put(
-            TaskStatusUpdateEvent(state=TaskState.completed, result=result)
+            TaskStatusUpdateEvent(state=_task_state("COMPLETED"), result=result)
         )
 
         self.logger.info(f"Task {result.get('id')} completed successfully")
@@ -213,9 +233,9 @@ class A2ADaemonExecutor(AgentExecutor):
 
         # Emit completion status
         final_state = (
-            TaskState.completed
+            _task_state("COMPLETED")
             if result.get("status") == "success"
-            else TaskState.failed
+            else _task_state("FAILED")
         )
         await event_queue.put(TaskStatusUpdateEvent(state=final_state, result=result))
 
@@ -251,7 +271,7 @@ class A2ADaemonExecutor(AgentExecutor):
 
         # Emit completion status
         await event_queue.put(
-            TaskStatusUpdateEvent(state=TaskState.completed, result=result)
+            TaskStatusUpdateEvent(state=_task_state("COMPLETED"), result=result)
         )
 
         self.logger.info(f"Agent {result.get('id')} registered successfully")
@@ -285,10 +305,10 @@ class A2ADaemonExecutor(AgentExecutor):
 
             # Update task status to canceled using canonical A2A TaskState enum
             terminal_states = {
-                TaskState.COMPLETED,
-                TaskState.CANCELED,
-                TaskState.FAILED,
-                TaskState.REJECTED,
+                _task_state("COMPLETED"),
+                _task_state("CANCELED"),
+                _task_state("FAILED"),
+                _task_state("REJECTED"),
             }
             current_state = (
                 task.get("status") if isinstance(task, dict) else task.status
@@ -307,9 +327,9 @@ class A2ADaemonExecutor(AgentExecutor):
                 return
 
             if isinstance(task, dict):
-                task["status"] = TaskState.canceled
+                task["status"] = _task_state("CANCELED").value
             else:
-                task.status = TaskStatus(state=TaskState.canceled)
+                task.status = TaskStatus(state=_task_state("CANCELED"))
 
             # Save updated task
             await self.task_store.save(task)

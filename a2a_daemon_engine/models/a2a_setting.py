@@ -1,11 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-from __future__ import print_function
-
 __author__ = "bibow"
 
 import functools
-import logging
 import traceback
 import uuid
 from typing import Any, Dict

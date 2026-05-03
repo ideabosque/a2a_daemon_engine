@@ -108,9 +108,9 @@ def execute_a2a_task(
         if not task:
             raise ValueError(f"Task not found: {task_id}")
 
-        # Update task status to in_progress
+        # Update task status to WORKING
         _update_task_status(
-            partition_key=partition_key, task_id=task_id, status="in_progress"
+            partition_key=partition_key, task_id=task_id, status="WORKING"
         )
 
         # Execute task based on task_type
@@ -130,7 +130,7 @@ def execute_a2a_task(
         _update_task_completion(
             partition_key=partition_key,
             task_id=task_id,
-            status="completed",
+            status="COMPLETED",
             output_data=output_data,
         )
 
@@ -146,7 +146,7 @@ def execute_a2a_task(
         _update_task_completion(
             partition_key=partition_key,
             task_id=task_id,
-            status="failed",
+            status="FAILED",
             output_data={"error": str(e), "traceback": log},
         )
 
@@ -502,7 +502,7 @@ async def insert_a2a_task(
         "partId": part_id,
         "taskType": task_data.get("task_type", "general"),
         "assignedAgentId": task_data.get("assigned_agent_id"),
-        "status": task_data.get("status", "pending"),
+        "status": task_data.get("status", "SUBMITTED").upper(),
         "priority": task_data.get("priority", "medium"),
         "inputData": Serializer.json_dumps(task_data.get("input_data", {})),
         "outputData": Serializer.json_dumps(task_data.get("output_data", {})),
@@ -676,7 +676,7 @@ async def update_a2a_task(
     if "assigned_agent_id" in task_data:
         variables["assignedAgentId"] = task_data["assigned_agent_id"]
     if "status" in task_data:
-        variables["status"] = task_data["status"]
+        variables["status"] = task_data["status"].upper()
     if "priority" in task_data:
         variables["priority"] = task_data["priority"]
     if "input_data" in task_data:

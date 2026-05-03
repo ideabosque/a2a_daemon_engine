@@ -6,8 +6,6 @@ This package contains all DynamoDB model definitions using the partition_key arc
 All models follow the composite partition key pattern: partition_key = "endpoint_id#part_id"
 """
 
-from __future__ import print_function
-
 __author__ = "SilvaEngine Team"
 __version__ = "0.0.1"
 

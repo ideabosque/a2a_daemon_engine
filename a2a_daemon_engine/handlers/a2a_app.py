@@ -11,6 +11,7 @@ Provides HTTP/REST API endpoints for A2A operations including:
 - A2A JSON-RPC 2.0 protocol
 """
 
+import os
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -32,6 +33,23 @@ from .a2a_jsonrpc import process_a2a_jsonrpc_message
 from .config import Config
 
 __author__ = "SilvaEngine Team"
+
+
+def _resolve_cors_origins() -> List[str]:
+    """
+    Resolve CORS origins from the A2A_CORS_ORIGINS environment variable.
+
+    Behavior:
+    - Comma-separated list of origins (e.g. "https://a.example,https://b.example")
+    - "*" enables wildcard origin (development only; incompatible with credentials)
+    - Empty / unset defaults to "*" with allow_credentials disabled, matching the
+      historical wide-open behavior while flagging it for production hardening.
+    """
+    raw = os.getenv("A2A_CORS_ORIGINS", "").strip()
+    if not raw:
+        return ["*"]
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    return origins or ["*"]
 
 
 def _get_partition_key(endpoint_id: str, request: Request) -> Tuple[str, str | None]:
@@ -90,11 +108,14 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application
 app = FastAPI(title="A2A Daemon Engine", lifespan=lifespan)
 
-# Add CORS middleware
+# Configure CORS via env var. Wildcard origin is incompatible with allow_credentials;
+# disable credentials when "*" is used so browsers do not silently drop responses.
+_cors_origins = _resolve_cors_origins()
+_allow_credentials = _cors_origins != ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # TODO: Configure for production
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_allow_credentials,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
@@ -375,7 +396,7 @@ async def register_agent(
     partition_key, part_id = _get_partition_key(endpoint_id, request)
 
     try:
-        agent_info = agent_data.dict()
+        agent_info = agent_data.model_dump()
         agent_info["updated_by"] = user.get("username", "unknown")
 
         result = await handle_agent_handshake(
@@ -419,7 +440,7 @@ async def agent_handshake(
     partition_key, part_id = _get_partition_key(endpoint_id, request)
 
     try:
-        agent_info = agent_data.dict()
+        agent_info = agent_data.model_dump()
         agent_info["agent_id"] = agent_id
         agent_info["updated_by"] = user.get("username", "unknown")
 
@@ -476,7 +497,7 @@ async def create_task(
     partition_key, part_id = _get_partition_key(endpoint_id, request)
 
     try:
-        task = task_data.dict()
+        task = task_data.model_dump()
         task["updated_by"] = user.get("username", "unknown")
 
         result = await handle_task_assignment(partition_key=partition_key, task=task)
@@ -593,7 +614,7 @@ async def send_message(
     partition_key, part_id = _get_partition_key(endpoint_id, request)
 
     try:
-        message_data = message.dict()
+        message_data = message.model_dump()
         message_data["to_agent_id"] = agent_id
 
         result = await handle_message_routing(

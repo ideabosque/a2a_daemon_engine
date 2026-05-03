@@ -6,10 +6,10 @@ Local JWT Token Management for A2A Daemon Engine
 Handles creation and verification of local JWT tokens using HS256 algorithm.
 """
 
-from datetime import datetime, timedelta
 from typing import Any, Dict
 
 import jwt
+import pendulum
 from fastapi import HTTPException
 
 from .config import Config
@@ -36,11 +36,11 @@ def create_local_jwt(payload: Dict[str, Any]) -> str:
         )
 
     # Add standard claims
-    now = datetime.utcnow()
+    now = pendulum.now("UTC")
     token_payload = {
         **payload,
         "iat": now,
-        "exp": now + timedelta(minutes=Config.access_token_exp),
+        "exp": now.add(minutes=Config.access_token_exp),
         "iss": "a2a-daemon-engine",
     }
 
@@ -123,12 +123,12 @@ def get_or_create_admin_token() -> str:
         raise ValueError("Admin username not configured")
 
     # Create token with extended expiration (30 days)
-    now = datetime.utcnow()
+    now = pendulum.now("UTC")
     payload = {
         "username": Config.admin_username,
         "roles": ["admin"],
         "iat": now,
-        "exp": now + timedelta(days=30),
+        "exp": now.add(days=30),
         "iss": "a2a-daemon-engine",
         "sub": Config.admin_username,
     }

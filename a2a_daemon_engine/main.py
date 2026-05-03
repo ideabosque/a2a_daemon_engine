@@ -145,29 +145,25 @@ class A2ADaemonEngine(object):
         self.port = int(setting["port"])
         self.logger = logger
         self.setting = setting
-        self._loop: asyncio.AbstractEventLoop | None = None
 
     def _run_async(self, coro):
         """
-        Run an async coroutine from a sync context.
+        Run an async coroutine from a sync context (e.g. Lambda).
 
-        This helper manages the event loop properly to avoid conflicts
-        when running under async contexts (e.g., Uvicorn).
-
-        Pattern: If an event loop is already running, use run_coroutine_threadsafe.
-        Otherwise, use asyncio.run() for clean execution.
+        If a loop is already running on this thread (async host), submit the
+        coroutine to a fresh thread so we don't nest event loops. Otherwise
+        run it directly with asyncio.run().
         """
         try:
-            loop = asyncio.get_running_loop()
-            # We're already in an async context - use thread-safe execution
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, coro)
-                return future.result()
+            asyncio.get_running_loop()
         except RuntimeError:
-            # No event loop running - safe to use asyncio.run()
             return asyncio.run(coro)
+
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result()
 
     def _apply_partition_defaults(self, params: Dict[str, Any]) -> None:
         """
@@ -184,19 +180,16 @@ class A2ADaemonEngine(object):
         Args:
             params: Parameters dictionary to update
         """
-        ## Test the waters 🧪 before diving in!
-        ##<--Testing Data-->##
         if params.get("endpoint_id") is None:
             params["endpoint_id"] = self.setting.get("endpoint_id")
         if params.get("part_id") is None:
             params["part_id"] = self.setting.get("part_id")
-        ##<--Testing Data-->##
 
         endpoint_id = params.get("endpoint_id")
-        params["partition_key"] = f"{endpoint_id}"
         part_id = params.get("part_id")
-        if part_id:
-            params["partition_key"] = f"{endpoint_id}#{part_id}"
+        params["partition_key"] = (
+            f"{endpoint_id}#{part_id}" if part_id else f"{endpoint_id}"
+        )
 
     def a2a_core_graphql(self, **params: Dict[str, Any]) -> Any:
         """
@@ -356,7 +349,6 @@ class A2ADaemonEngine(object):
             if self.transport == "http":
                 import uvicorn
                 from fastapi import FastAPI
-                from starlette.applications import Starlette
 
                 from .handlers.a2a_app import app as fastapi_app
                 from .handlers.auth_router import router as auth_router

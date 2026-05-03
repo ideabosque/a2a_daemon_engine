@@ -11,7 +11,7 @@ import os
 import re
 import sys
 from typing import Any, Dict, Sequence
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from dotenv import load_dotenv

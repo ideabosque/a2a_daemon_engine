@@ -21,9 +21,7 @@ import logging
 import os
 import random
 import sys
-import time
 import uuid
-from datetime import datetime, timedelta
 
 import pendulum
 from dotenv import load_dotenv
@@ -291,7 +289,7 @@ def generate_and_load_data(engine):
                     "task_type": task_data["task_type"],
                     "assigned_to": task_data["assigned_to"],
                     "input_data": task_data["input_data"],
-                    "status": "pending",
+                    "status": "SUBMITTED",
                 }
             )
 
@@ -388,7 +386,7 @@ def generate_and_load_data(engine):
                 {
                     "task_id": task_id,
                     "execution_input": execution_input,
-                    "status": "completed",
+                    "status": "COMPLETED",
                     "executed_at": pendulum.now("UTC").to_iso8601_string(),
                 }
             )

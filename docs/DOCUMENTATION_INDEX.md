@@ -1,7 +1,7 @@
 # Documentation Index - A2A Daemon Engine
 
 **Last Updated**: May 2026
-**Version**: 0.2.0 (Post-Reformation)
+**Version**: 0.0.1 package; roadmap tracks post-reformation A2A v1.0 work
 
 This index provides quick navigation to all documentation based on your needs.
 
@@ -9,61 +9,58 @@ This index provides quick navigation to all documentation based on your needs.
 
 ## 🎯 Primary Documentation
 
-### **A2A_DEVELOPMENT_PLAN.md** ⭐ - Single Source of Truth
+### **A2A_DEVELOPMENT_PLAN.md** ⭐ - Primary Development Roadmap
 
-All documentation has been consolidated into **[A2A_DEVELOPMENT_PLAN.md](A2A_DEVELOPMENT_PLAN.md)** for easier maintenance.
+The active roadmap and implementation audit live in **[A2A_DEVELOPMENT_PLAN.md](A2A_DEVELOPMENT_PLAN.md)**.
 
 **What's included:**
 - Executive Summary & Overview
-- Quick Start Guide (installation, configuration, examples)
 - Complete Architecture (diagrams, layer explanations)
-- API Reference (endpoints, JSON-RPC methods)
 - Implementation Status (component matrices)
-- **Code Review Suggestions** (security, quality, architecture improvements)
 - Development Roadmap (Phases 6-9)
-- Appendices (environment variables, deployment, authentication)
-- Changelog
+- Protocol gap analysis summary
+- Security, observability, testing, and compliance work
 
 ---
 
-## 📚 Legacy Documents (Redirect Only)
+## 📚 Supporting Documents
 
-The following documents now redirect to A2A_DEVELOPMENT_PLAN.md:
+The repository currently contains these documentation files:
 
 | File | Status | Refer To |
 |------|--------|----------|
-| ARCHITECTURE_AND_IMPLEMENTATION_GUIDE.md | Content Merged | [Architecture Section](A2A_DEVELOPMENT_PLAN.md#architecture) |
-| A2A_REFORMATION_PLAN.md | Content Merged | [Executive Summary](A2A_DEVELOPMENT_PLAN.md#executive-summary) |
-| FUNCTION_MAPPING.md | Content Merged | [Architecture Section](A2A_DEVELOPMENT_PLAN.md#architecture) |
-| TODO_AUDIT_REPORT.md | Content Merged | [Code Review Suggestions](A2A_DEVELOPMENT_PLAN.md#code-review-suggestions-new) |
+| A2A_DEVELOPMENT_PLAN.md | Active roadmap | [Development Roadmap](A2A_DEVELOPMENT_PLAN.md#6-development-roadmap) |
+| a2a-protocol-analysis.md | Protocol background and suggestions | [Protocol Analysis](a2a-protocol-analysis.md) |
+| DOCUMENTATION_INDEX.md | This index | Current file |
+| README.md | Project overview and quick start | [README](../README.md) |
 
 ---
 
 ## 🔍 Find Documentation by Need
 
 ### "How do I get started?"
-→ [A2A_DEVELOPMENT_PLAN.md - Quick Start](A2A_DEVELOPMENT_PLAN.md#quick-start)
+→ [README.md - Quick Start](../README.md#quick-start)
 
 ### "What's the current implementation status?"
-→ [A2A_DEVELOPMENT_PLAN.md - Implementation Status](A2A_DEVELOPMENT_PLAN.md#implementation-status)
+→ [A2A_DEVELOPMENT_PLAN.md - Implementation Status](A2A_DEVELOPMENT_PLAN.md#3-implementation-status)
 
 ### "How does the architecture work?"
-→ [A2A_DEVELOPMENT_PLAN.md - Architecture](A2A_DEVELOPMENT_PLAN.md#architecture)
+→ [A2A_DEVELOPMENT_PLAN.md - Current Architecture](A2A_DEVELOPMENT_PLAN.md#2-current-architecture)
 
 ### "What are the API endpoints?"
-→ [A2A_DEVELOPMENT_PLAN.md - API Reference](A2A_DEVELOPMENT_PLAN.md#api-reference)
+→ [README.md - API Endpoints](../README.md#api-endpoints)
 
 ### "What improvements are needed?"
-→ [A2A_DEVELOPMENT_PLAN.md - Code Review Suggestions](A2A_DEVELOPMENT_PLAN.md#code-review-suggestions-new)
+→ [A2A_DEVELOPMENT_PLAN.md - Code-Level Issues](A2A_DEVELOPMENT_PLAN.md#33-code-level-issues-discovered-2026-05-02-audit)
 
 ### "What's the development roadmap?"
-→ [A2A_DEVELOPMENT_PLAN.md - Development Roadmap](A2A_DEVELOPMENT_PLAN.md#development-roadmap)
+→ [A2A_DEVELOPMENT_PLAN.md - Development Roadmap](A2A_DEVELOPMENT_PLAN.md#6-development-roadmap)
 
 ### "How do I deploy the daemon?"
-→ [A2A_DEVELOPMENT_PLAN.md - Appendix B: Deployment](A2A_DEVELOPMENT_PLAN.md#appendix-b-deployment-examples)
+→ [README.md - Deployment](../README.md#deployment)
 
 ### "How do I configure authentication?"
-→ [A2A_DEVELOPMENT_PLAN.md - Appendix C: Authentication](A2A_DEVELOPMENT_PLAN.md#appendix-c-authentication-examples)
+→ [README.md - Authentication](../README.md#authentication)
 
 ---
 
@@ -89,17 +86,14 @@ The following documents now redirect to A2A_DEVELOPMENT_PLAN.md:
 - Status tracking in DynamoDB
 - EventQueue integration
 
-### Pending (Future Enhancements)
+### Active / Pending
 
-📋 **Phase 6**: A2A SDK v1.0 Upgrade
-- Migrate TaskState to SCREAMING_SNAKE_CASE
-- Add AUTH_REQUIRED / REJECTED states
-- Thread `contextId` through executor/store
-- Remove hand-rolled JSON-RPC in favor of SDK DefaultRequestHandler
-- Replace all `asyncio.run()` calls in async contexts
-- Fix broken `handle_agent_registration` import
-- Reject weak JWT_SECRET_KEY at startup
-- Strip `from __future__ import print_function`
+📋 **Phase 6**: A2A SDK v1.0 Upgrade & Compatibility Audit
+- Dependency declaration updated to `a2a-sdk ^1.0.0`
+- TaskStore status mapping partially migrated to SCREAMING_SNAKE_CASE
+- `contextId`, `createdAt`, and `lastModified` model fields added
+- Still requires runtime verification against installed SDK v1.0
+- Still requires enum-casing cleanup, legacy JSON-RPC decisions, and tests
 
 📋 **Phase 7**: Streaming & Multi-Turn
 - `SendStreamingMessage` (SSE)

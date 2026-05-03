@@ -125,8 +125,21 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --strict-markers"
-testpaths = ["tests"]
+testpaths = ["a2a_daemon_engine/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 asyncio_mode = "auto"
+markers = [
+    "unit: Unit tests (no external dependencies)",
+    "integration: Integration tests (DB, API)",
+    "slow: Tests taking significant time",
+    "a2a: A2A protocol tests",
+    "agent: Agent-related tests",
+    "task: Task handling tests",
+    "message: Message routing tests",
+    "setting: Setting-related tests",
+    "server: A2A server tests",
+    "graphql: GraphQL schema tests",
+    "cache: Cache configuration tests",
+]

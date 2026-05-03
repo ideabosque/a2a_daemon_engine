@@ -18,8 +18,10 @@ Interface Contract:
 """
 
 import logging
-from typing import Any, Dict, Optional, List
-from datetime import datetime
+from collections import OrderedDict, deque
+from typing import Any, Deque, Dict, List, Optional
+
+import pendulum
 
 from a2a.server.tasks import TaskStore
 from a2a.server.context import ServerCallContext
@@ -28,6 +30,38 @@ from a2a.server.context import ServerCallContext
 from a2a.types import Task, TaskState, TaskStatus
 
 __author__ = "SilvaEngine Team"
+
+# Bound the in-memory event cache so long-running processes don't grow unbounded.
+# Per-task replay buffer size aligns with the Phase 7 SSE replay-buffer design
+# (100 events per task, see docs/A2A_DEVELOPMENT_PLAN.md §4.4).
+_DEFAULT_MAX_TASKS_CACHED = 1024
+_DEFAULT_MAX_EVENTS_PER_TASK = 100
+
+
+def _task_state(name: str) -> TaskState:
+    """
+    Resolve TaskState members across SDK enum casing differences.
+
+    A2A v1.0 uses SCREAMING_SNAKE_CASE enum members, while older SDK samples used
+    lowercase names. Prefer the v1.0 member and fall back for compatibility.
+    """
+    if hasattr(TaskState, name):
+        return getattr(TaskState, name)
+    if hasattr(TaskState, name.lower()):
+        return getattr(TaskState, name.lower())
+    aliases = {
+        "AUTH_REQUIRED": "INPUT_REQUIRED",
+        "REJECTED": "FAILED",
+        "SUBMITTED": "WORKING",
+        "UNKNOWN": "WORKING",
+    }
+    alias = aliases.get(name)
+    if alias:
+        if hasattr(TaskState, alias):
+            return getattr(TaskState, alias)
+        if hasattr(TaskState, alias.lower()):
+            return getattr(TaskState, alias.lower())
+    raise AttributeError(f"TaskState has no member for {name}")
 
 
 class DynamoDBA2ATaskStore(TaskStore):
@@ -46,24 +80,47 @@ class DynamoDBA2ATaskStore(TaskStore):
     For production event streaming, consider using Redis or similar.
     """
 
-    def __init__(self, partition_key: str, logger: Optional[logging.Logger] = None):
+    def __init__(
+        self,
+        partition_key: str,
+        logger: Optional[logging.Logger] = None,
+        max_tasks_cached: int = _DEFAULT_MAX_TASKS_CACHED,
+        max_events_per_task: int = _DEFAULT_MAX_EVENTS_PER_TASK,
+    ):
         """
         Initialize DynamoDB task store.
 
         Args:
             partition_key: Partition key for multi-tenant isolation (e.g., "endpoint#partition")
             logger: Optional logger instance
+            max_tasks_cached: Maximum number of tasks retained in the event cache (LRU evicted)
+            max_events_per_task: Maximum events buffered per task (oldest dropped)
         """
         self.partition_key = partition_key
         self.logger = logger or logging.getLogger(__name__)
+        self._max_tasks_cached = max_tasks_cached
+        self._max_events_per_task = max_events_per_task
 
-        # In-memory cache for streaming events
-        # TODO: Consider using Redis for production event streaming
-        self._event_cache: Dict[str, List[Dict[str, Any]]] = {}
+        # Bounded in-memory event cache: LRU over tasks, ring buffer per task.
+        # For production-grade event streaming, externalize to Redis Streams or similar.
+        self._event_cache: "OrderedDict[str, Deque[Dict[str, Any]]]" = OrderedDict()
 
         self.logger.info(
             f"DynamoDB task store initialized for partition: {partition_key}"
         )
+
+    def _touch_task_cache(self, task_id: str) -> Deque[Dict[str, Any]]:
+        """Return (and LRU-promote) the bounded event buffer for a task."""
+        buffer = self._event_cache.get(task_id)
+        if buffer is None:
+            buffer = deque(maxlen=self._max_events_per_task)
+            self._event_cache[task_id] = buffer
+            # Evict the least-recently-used task if we exceed the cap.
+            while len(self._event_cache) > self._max_tasks_cached:
+                self._event_cache.popitem(last=False)
+        else:
+            self._event_cache.move_to_end(task_id)
+        return buffer
 
     # =============================================================================
     # CANONICAL A2A SDK TASKSTORE INTERFACE
@@ -143,8 +200,8 @@ class DynamoDBA2ATaskStore(TaskStore):
                     partition_key=self.partition_key, task_data=task_dict
                 )
 
-                # Initialize event cache for new task
-                self._event_cache[task_id] = []
+                # Initialize bounded event cache for new task
+                self._touch_task_cache(task_id)
 
         except Exception as e:
             self.logger.error(f"Failed to save task {task_id}: {e}")
@@ -191,18 +248,21 @@ class DynamoDBA2ATaskStore(TaskStore):
             TaskState enum value
         """
         status_map = {
-            "SUBMITTED": TaskState.SUBMITTED,
-            "WORKING": TaskState.WORKING,
-            "INPUT_REQUIRED": TaskState.INPUT_REQUIRED,
-            "AUTH_REQUIRED": TaskState.AUTH_REQUIRED,
-            "COMPLETED": TaskState.COMPLETED,
-            "FAILED": TaskState.FAILED,
-            "CANCELED": TaskState.CANCELED,
-            "REJECTED": TaskState.REJECTED,
-            "UNKNOWN": TaskState.UNKNOWN,
+            "PENDING": _task_state("SUBMITTED"),
+            "IN_PROGRESS": _task_state("WORKING"),
+            "SUBMITTED": _task_state("SUBMITTED"),
+            "WORKING": _task_state("WORKING"),
+            "INPUT_REQUIRED": _task_state("INPUT_REQUIRED"),
+            "AUTH_REQUIRED": _task_state("AUTH_REQUIRED"),
+            "COMPLETED": _task_state("COMPLETED"),
+            "FAILED": _task_state("FAILED"),
+            "CANCELED": _task_state("CANCELED"),
+            "CANCELLED": _task_state("CANCELED"),
+            "REJECTED": _task_state("REJECTED"),
+            "UNKNOWN": _task_state("UNKNOWN"),
         }
 
-        return status_map.get(status_str, TaskState.UNKNOWN)
+        return status_map.get(status_str.upper(), _task_state("UNKNOWN"))
 
     def _dict_to_task(self, task_dict: Dict[str, Any]) -> Task:
         """
@@ -221,7 +281,7 @@ class DynamoDBA2ATaskStore(TaskStore):
             return task_dict
 
         # Map DynamoDB status string to TaskState enum
-        status_value = task_dict.get("status", "submitted")
+        status_value = task_dict.get("status", "SUBMITTED")
         if isinstance(status_value, TaskStatus):
             # Already a TaskStatus object
             task_status = status_value
@@ -231,7 +291,7 @@ class DynamoDBA2ATaskStore(TaskStore):
             task_status = TaskStatus(state=task_state)
         else:
             # Unknown type, default to submitted state
-            task_status = TaskStatus(state=TaskState.submitted)
+            task_status = TaskStatus(state=_task_state("SUBMITTED"))
 
         # Otherwise, construct proper Task object
         # Map DynamoDB fields to Task fields
@@ -299,7 +359,7 @@ class DynamoDBA2ATaskStore(TaskStore):
                 "metadata": task.get("metadata", {}),
                 "history": task.get("history", []),
                 "artifacts": task.get("artifacts", []),
-                "updated_at": datetime.utcnow().isoformat(),
+                "updated_at": pendulum.now("UTC").to_iso8601_string(),
                 **{
                     k: v
                     for k, v in task.items()
@@ -311,14 +371,14 @@ class DynamoDBA2ATaskStore(TaskStore):
         status_value = (
             task.status
             if hasattr(task, "status")
-            else TaskStatus(state=TaskState.SUBMITTED)
+            else TaskStatus(state=_task_state("SUBMITTED"))
         )
         status_str = extract_status_string(status_value)
 
         task_dict = {
             "id": task.id if hasattr(task, "id") else str(task),
             "status": status_str,
-            "updated_at": datetime.utcnow().isoformat(),
+            "updated_at": pendulum.now("UTC").to_iso8601_string(),
         }
 
         # Add optional fields if present
@@ -368,14 +428,15 @@ class DynamoDBA2ATaskStore(TaskStore):
         import json
 
         try:
-            # Decode page_token to get ExclusiveStartKey
-            start_key = None
+            # Decode page_token to get the next list offset.
+            offset = 0
             if page_token:
                 try:
-                    start_key = json.loads(base64.b64decode(page_token))
+                    decoded = json.loads(base64.b64decode(page_token))
+                    offset = int(decoded.get("offset", 0))
                 except Exception:
                     self.logger.warning(f"Invalid page_token: {page_token}")
-                    start_key = None
+                    offset = 0
 
             # Build filter dict
             filter_dict = {}
@@ -386,23 +447,25 @@ class DynamoDBA2ATaskStore(TaskStore):
             if context_id:
                 filter_dict["context_id"] = context_id
 
-            # Query with pagination
-            results = await query_a2a_task(
+            # Query enough rows to provide offset-based pagination over the
+            # current GraphQL wrapper, which does not expose DynamoDB LastKey.
+            tasks = await query_a2a_task(
                 partition_key=self.partition_key,
                 filter_dict=filter_dict,
-                limit=page_size,
-                start_key=start_key,
+                limit=offset + page_size + 1,
             )
 
-            tasks = results.get("items", []) if results else []
-            last_key = results.get("last_key") if results else None
+            page = tasks[offset : offset + page_size]
+            has_next = len(tasks) > offset + page_size
 
             # Encode next cursor
             next_token = None
-            if last_key:
-                next_token = base64.b64encode(json.dumps(last_key).encode()).decode()
+            if has_next:
+                next_token = base64.b64encode(
+                    json.dumps({"offset": offset + page_size}).encode()
+                ).decode()
 
-            return tasks, next_token
+            return page, next_token
         except Exception as e:
             self.logger.error(f"Failed to list tasks: {e}")
             return [], None
@@ -420,11 +483,9 @@ class DynamoDBA2ATaskStore(TaskStore):
             task_id: Task identifier
             event: Event data (status update, artifact, etc.)
         """
-        # Store in memory cache for streaming
-        if task_id not in self._event_cache:
-            self._event_cache[task_id] = []
-
-        self._event_cache[task_id].append(event)
+        # Store in bounded in-memory cache for streaming.
+        # The deque automatically discards the oldest event past max_events_per_task.
+        self._touch_task_cache(task_id).append(event)
 
         # Get current task
         from .a2a_utility import get_a2a_task, update_a2a_task
@@ -441,7 +502,7 @@ class DynamoDBA2ATaskStore(TaskStore):
                     task_id=task_id,
                     task_data={
                         "last_event": event,
-                        "last_event_at": datetime.utcnow().isoformat(),
+                        "last_event_at": pendulum.now("UTC").to_iso8601_string(),
                     },
                 )
         except Exception as e:
@@ -462,7 +523,8 @@ class DynamoDBA2ATaskStore(TaskStore):
         Returns:
             List of event data dictionaries
         """
-        return self._event_cache.get(task_id, [])
+        buffer = self._event_cache.get(task_id)
+        return list(buffer) if buffer else []
 
     async def clear_events(self, task_id: str) -> None:
         """

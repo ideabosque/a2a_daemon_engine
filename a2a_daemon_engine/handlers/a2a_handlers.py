@@ -7,11 +7,17 @@ High-level business logic handlers for A2A protocol operations.
 Orchestrates between A2A server and database operations.
 """
 
+import asyncio
+import json
 import uuid
 from typing import Any, Dict, List, Optional
 
-from .config import Config
+import httpx
+import pendulum
+
 from silvaengine_utility.serializer import Serializer
+
+from .config import Config
 
 __author__ = "SilvaEngine Team"
 
@@ -335,8 +341,6 @@ async def find_best_agent(
         # Filter agents by capabilities
         matching_agents = []
         for agent in agents:
-            import json
-
             agent_capabilities = json.loads(agent.get("capabilities", "[]"))
             if all(cap in agent_capabilities for cap in required_capabilities):
                 matching_agents.append(agent)
@@ -434,9 +438,6 @@ async def deliver_message_to_agent(
     Returns:
         True if delivered successfully, False otherwise
     """
-    import httpx
-    from datetime import datetime
-
     endpoint_url = recipient_agent.get("endpointUrl")
     if not endpoint_url:
         if Config.logger:
@@ -451,7 +452,7 @@ async def deliver_message_to_agent(
     # Prepare message payload
     message_payload = {
         "message_id": message_id,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": pendulum.now("UTC").to_iso8601_string(),
         "payload": payload,
     }
 
@@ -477,7 +478,7 @@ async def deliver_message_to_agent(
                         partition_key=partition_key,
                         message_id=message_id,
                         status="delivered",
-                        delivered_at=datetime.utcnow().isoformat(),
+                        delivered_at=pendulum.now("UTC").to_iso8601_string(),
                     )
                     return True
                 else:
@@ -495,8 +496,6 @@ async def deliver_message_to_agent(
 
         # Exponential backoff before retry (1s, 2s, 4s...)
         if attempt < max_retries - 1:
-            import asyncio
-
             await asyncio.sleep(2**attempt)
 
     # All retries exhausted - mark as failed

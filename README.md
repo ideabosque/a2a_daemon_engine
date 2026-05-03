@@ -1,19 +1,20 @@
 # A2A Daemon Engine
 
-**Version**: 0.2.0 (Post-Reformation)
-**Status**: ✅ A2A SDK v0.3.0 Compliant
-**Last Updated**: 2025-12-31
+**Package Version**: 0.0.1
+**Status**: Phases 1-5 complete; A2A SDK v1.0 migration is partially implemented and under compatibility audit
+**Last Updated**: 2026-05-02
 
 A dedicated Agent-to-Agent (A2A) protocol daemon engine for distributed agent communication and multi-agent orchestration following canonical A2A SDK patterns.
 
-## 🎉 Recent Updates (v0.2.0 - December 2025)
+## Recent Updates
 
-**Major Reformation Complete** - Full alignment with official A2A SDK patterns:
-- ✅ **Phase 1-3**: Core SDK alignment (AgentExecutor, TaskStore, async wrappers)
-- ✅ **Phase 4**: Architecture restructured (A2A app as primary)
-- ✅ **Phase 5**: Event-driven message delivery with retry logic
+**Post-reformation architecture is in place**, and the project is now focused on the A2A SDK v1.0 compatibility audit:
+- **Phase 1-3**: Core SDK alignment (AgentExecutor, TaskStore, async wrappers)
+- **Phase 4**: Architecture restructured (A2A app as primary)
+- **Phase 5**: Event-driven message delivery with retry logic
+- **Phase 6**: A2A SDK v1.0 dependency and partial code migration; runtime verification and cleanup still pending
 
-See [A2A_REFORMATION_PLAN.md](docs/A2A_REFORMATION_PLAN.md) for complete details.
+See [A2A_DEVELOPMENT_PLAN.md](docs/A2A_DEVELOPMENT_PLAN.md) for current status, gaps, and roadmap.
 
 ## Overview
 
@@ -67,7 +68,7 @@ The engine follows the **canonical A2A SDK pattern** (Option A):
 git clone https://github.com/silvaengine/a2a-daemon-engine.git
 cd a2a-daemon-engine
 
-# Install dependencies (requires A2A SDK v0.3.0+)
+# Install dependencies
 poetry install
 ```
 
@@ -127,7 +128,7 @@ curl -X POST http://localhost:8001/ \
 - `GET /rest/a2a/{endpoint_id}/agents` - List agents
 - `POST /rest/a2a-jsonrpc` - Consolidated JSON-RPC handler
 
-See [docs/A2A_REFORMATION_PLAN.md](docs/A2A_REFORMATION_PLAN.md#-migration-guide) for migration guide.
+See [docs/A2A_DEVELOPMENT_PLAN.md](docs/A2A_DEVELOPMENT_PLAN.md) for current migration status and roadmap.
 
 ## Usage Examples
 
@@ -438,10 +439,9 @@ poetry run pytest --cov=a2a_daemon_engine
 
 ## Documentation
 
-- [A2A Reformation Plan](docs/A2A_REFORMATION_PLAN.md) - Complete reformation details and migration guide
-- [Architecture Guide](docs/ARCHITECTURE_AND_IMPLEMENTATION_GUIDE.md) - Detailed architecture
 - [Development Plan](docs/A2A_DEVELOPMENT_PLAN.md) - Development roadmap
-- [TODO Audit](docs/TODO_AUDIT_REPORT.md) - Outstanding tasks
+- [Protocol Analysis](docs/a2a-protocol-analysis.md) - A2A v1.0 analysis and recommendations
+- [Documentation Index](docs/DOCUMENTATION_INDEX.md) - Documentation map
 
 ## Contributing
 

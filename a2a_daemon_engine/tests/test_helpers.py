@@ -176,6 +176,29 @@ def call_method(
         return None, exc
 
 
+def call_a2a_method(
+    engine: Any,
+    action: str,
+    arguments: Optional[Dict[str, Any]] = None,
+    label: Optional[str] = None,
+) -> Tuple[Optional[Any], Optional[Exception]]:
+    """
+    Invoke the engine's A2A action entrypoint with consistent logging.
+
+    Args:
+        engine: Engine instance
+        action: A2A action name
+        arguments: Action arguments
+        label: Optional label for logging
+
+    Returns:
+        Tuple of (result, error) - one will be None
+    """
+    payload = dict(arguments or {})
+    payload["action"] = action
+    return call_method(engine, "a2a", payload, label or action)
+
+
 def log_test_result(func):
     """
     Decorator to log test execution with timing.
