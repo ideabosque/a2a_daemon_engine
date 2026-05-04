@@ -94,6 +94,9 @@ def test_agent_lifecycle_flow(
     test_data: Any,
 ) -> None:
     """Test A2A Agent lifecycle: Insert -> Get -> List -> Delete."""
+    # Construct partition_key
+    partition_key = f"{endpoint_id}#{part_id}"
+
     # 1. Insert
     insert_query = Graphql.generate_graphql_operation(
         "insertUpdateA2aAgent", "Mutation", schema
@@ -111,7 +114,11 @@ def test_agent_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": insert_query, "variables": insert_variables},
+        {
+            "query": insert_query,
+            "variables": insert_variables,
+            "context": {"partition_key": partition_key},
+        },
         "insert_agent",
     )
     assert error is None, f"Insert Agent failed: {error}"
@@ -125,7 +132,11 @@ def test_agent_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": get_query, "variables": get_variables},
+        {
+            "query": get_query,
+            "variables": get_variables,
+            "context": {"partition_key": partition_key},
+        },
         "get_agent",
     )
     assert error is None, f"Get Agent failed: {error}"
@@ -137,7 +148,11 @@ def test_agent_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": list_query, "variables": list_variables},
+        {
+            "query": list_query,
+            "variables": list_variables,
+            "context": {"partition_key": partition_key},
+        },
         "list_agents",
     )
     assert error is None, f"List Agents failed: {error}"
@@ -180,6 +195,9 @@ def test_task_lifecycle_flow(
     test_data: Any,
 ) -> None:
     """Test A2A Task lifecycle: Insert -> Get -> List -> Delete."""
+    # Construct partition_key
+    partition_key = f"{endpoint_id}#{part_id}"
+
     # 1. Insert
     insert_query = Graphql.generate_graphql_operation(
         "insertUpdateA2aTask", "Mutation", schema
@@ -196,7 +214,11 @@ def test_task_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": insert_query, "variables": insert_variables},
+        {
+            "query": insert_query,
+            "variables": insert_variables,
+            "context": {"partition_key": partition_key},
+        },
         "insert_task",
     )
     assert error is None, f"Insert Task failed: {error}"
@@ -210,7 +232,11 @@ def test_task_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": get_query, "variables": get_variables},
+        {
+            "query": get_query,
+            "variables": get_variables,
+            "context": {"partition_key": partition_key},
+        },
         "get_task",
     )
     assert error is None, f"Get Task failed: {error}"
@@ -222,7 +248,11 @@ def test_task_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": list_query, "variables": list_variables},
+        {
+            "query": list_query,
+            "variables": list_variables,
+            "context": {"partition_key": partition_key},
+        },
         "list_tasks",
     )
     assert error is None, f"List Tasks failed: {error}"
@@ -265,6 +295,9 @@ def test_message_lifecycle_flow(
     test_data: Any,
 ) -> None:
     """Test A2A Message lifecycle: Insert -> Get -> List -> Delete."""
+    # Construct partition_key
+    partition_key = f"{endpoint_id}#{part_id}"
+
     # 1. Insert
     insert_query = Graphql.generate_graphql_operation(
         "insertUpdateA2aMessage", "Mutation", schema
@@ -282,7 +315,11 @@ def test_message_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": insert_query, "variables": insert_variables},
+        {
+            "query": insert_query,
+            "variables": insert_variables,
+            "context": {"partition_key": partition_key},
+        },
         "insert_message",
     )
     assert error is None, f"Insert Message failed: {error}"
@@ -298,7 +335,11 @@ def test_message_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": get_query, "variables": get_variables},
+        {
+            "query": get_query,
+            "variables": get_variables,
+            "context": {"partition_key": partition_key},
+        },
         "get_message",
     )
     assert error is None, f"Get Message failed: {error}"
@@ -310,7 +351,11 @@ def test_message_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": list_query, "variables": list_variables},
+        {
+            "query": list_query,
+            "variables": list_variables,
+            "context": {"partition_key": partition_key},
+        },
         "list_messages",
     )
     assert error is None, f"List Messages failed: {error}"
@@ -333,7 +378,11 @@ def test_message_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": delete_query, "variables": delete_variables},
+        {
+            "query": delete_query,
+            "variables": delete_variables,
+            "context": {"partition_key": partition_key},
+        },
         "delete_message",
     )
     assert error is None, f"Delete Message failed: {error}"
@@ -355,6 +404,9 @@ def test_setting_lifecycle_flow(
     test_data: Any,
 ) -> None:
     """Test A2A Setting lifecycle: Insert -> Get -> List -> Delete."""
+    # Construct partition_key
+    partition_key = f"{endpoint_id}#{part_id}"
+
     # 1. Insert
     insert_query = Graphql.generate_graphql_operation(
         "insertUpdateA2aSetting", "Mutation", schema
@@ -369,7 +421,11 @@ def test_setting_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": insert_query, "variables": insert_variables},
+        {
+            "query": insert_query,
+            "variables": insert_variables,
+            "context": {"partition_key": partition_key},
+        },
         "insert_setting",
     )
     assert error is None, f"Insert Setting failed: {error}"
@@ -385,7 +441,11 @@ def test_setting_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": get_query, "variables": get_variables},
+        {
+            "query": get_query,
+            "variables": get_variables,
+            "context": {"partition_key": partition_key},
+        },
         "get_setting",
     )
     assert error is None, f"Get Setting failed: {error}"
@@ -397,7 +457,11 @@ def test_setting_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": list_query, "variables": list_variables},
+        {
+            "query": list_query,
+            "variables": list_variables,
+            "context": {"partition_key": partition_key},
+        },
         "list_settings",
     )
     assert error is None, f"List Settings failed: {error}"
@@ -420,7 +484,11 @@ def test_setting_lifecycle_flow(
     result, error = call_method(
         a2a_daemon_engine,
         "a2a_core_graphql",
-        {"query": delete_query, "variables": delete_variables},
+        {
+            "query": delete_query,
+            "variables": delete_variables,
+            "context": {"partition_key": partition_key},
+        },
         "delete_setting",
     )
     assert error is None, f"Delete Setting failed: {error}"

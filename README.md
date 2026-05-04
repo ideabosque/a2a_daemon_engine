@@ -1,8 +1,8 @@
 # A2A Daemon Engine
 
 **Package Version**: 0.0.1
-**Status**: Phases 1-5 complete; A2A SDK v1.0 migration is partially implemented and under compatibility audit
-**Last Updated**: 2026-05-02
+**Status**: Phases 1-5 complete; A2A SDK v1.0 migration is partially implemented with compatibility cleanup in progress
+**Last Updated**: 2026-05-03
 
 A dedicated Agent-to-Agent (A2A) protocol daemon engine for distributed agent communication and multi-agent orchestration following canonical A2A SDK patterns.
 
@@ -12,7 +12,8 @@ A dedicated Agent-to-Agent (A2A) protocol daemon engine for distributed agent co
 - **Phase 1-3**: Core SDK alignment (AgentExecutor, TaskStore, async wrappers)
 - **Phase 4**: Architecture restructured (A2A app as primary)
 - **Phase 5**: Event-driven message delivery with retry logic
-- **Phase 6**: A2A SDK v1.0 dependency and partial code migration; runtime verification and cleanup still pending
+- **Phase 6**: A2A SDK v1.0 dependency and partial code migration; initial compatibility cleanup applied, runtime verification still pending
+- **Hygiene pass (2026-05-03)**: pendulum-based UTC timestamps everywhere; bounded LRU + 100-event ring-buffer event cache; `A2A_CORS_ORIGINS` env var; Pydantic v2 `model_dump()`; 20 unused imports removed across 12 files (`pyflakes` clean)
 
 See [A2A_DEVELOPMENT_PLAN.md](docs/A2A_DEVELOPMENT_PLAN.md) for current status, gaps, and roadmap.
 

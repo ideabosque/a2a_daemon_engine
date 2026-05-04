@@ -30,13 +30,30 @@ from dotenv import load_dotenv
 env_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(env_path)
 
-# Ensure local packages are importable (mirrors conftest.py setup)
+# Get base directory from environment
 BASE_DIR = os.getenv("base_dir") or os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")
 )
-sys.path.insert(0, BASE_DIR)
-sys.path.insert(0, os.path.join(BASE_DIR, "silvaengine_utility"))
-sys.path.insert(1, os.path.join(BASE_DIR, "a2a_daemon_engine"))
+
+# Add local packages to the beginning of sys.path for priority
+local_paths = [
+    BASE_DIR,
+    os.path.join(BASE_DIR, "silvaengine_utility"),
+    os.path.join(BASE_DIR, "silvaengine_constants"),
+    os.path.join(BASE_DIR, "silvaengine_dynamodb_base"),
+    os.path.join(BASE_DIR, "a2a_daemon_engine"),
+]
+
+# Insert at position 0 (prepend) so local packages are found first
+for path in local_paths:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+# Debug: print sys.path to see the order
+if os.getenv("DEBUG_PATH"):
+    print("sys.path:")
+    for i, p in enumerate(sys.path[:10]):
+        print(f"  {i}: {p}")
 
 from silvaengine_utility.serializer import Serializer  # noqa: E402
 
@@ -72,6 +89,9 @@ SETTING = {
     "transport": os.getenv("transport", "http"),
     "port": int(os.getenv("port", "8001")),
     "initialize_tables": int(os.getenv("initialize_tables", "0")),
+    "jwt_secret_key": os.getenv(
+        "jwt_secret_key", "sample-data-loader-secret-key-32chars"
+    ),
 }
 
 # Sample data generation configuration

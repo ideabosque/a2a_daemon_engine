@@ -37,6 +37,12 @@ sys.path.insert(
         os.path.join(os.path.dirname(__file__), "../../../silvaengine_utility")
     ),
 )
+sys.path.insert(
+    0,
+    os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../../silvaengine_constants")
+    ),
+)
 
 from a2a_daemon_engine.main import A2ADaemonEngine
 
@@ -62,6 +68,9 @@ SETTING = {
     "port": int(os.getenv("port", "8001")),
     "initialize_tables": int(os.getenv("initialize_tables", "0")),
     "execute_mode": os.getenv("execute_mode", "local_for_all"),
+    "jwt_secret_key": os.getenv(
+        "jwt_secret_key", "test-secret-key-for-integration-testing-32chars"
+    ),
     "functs_on_local": {
         "a2a_core_graphql": {
             "module_name": "a2a_daemon_engine",
@@ -69,6 +78,9 @@ SETTING = {
         },
     },
 }
+
+# Pre-compute partition_key for test context
+SETTING["partition_key"] = f"{SETTING['endpoint_id']}#{SETTING['part_id']}"
 
 
 @pytest.fixture(scope="session")
@@ -117,26 +129,29 @@ def mock_engine(mock_logger, mock_settings):
 
 @pytest.fixture(scope="function")
 def a2a_daemon_engine(mock_logger, mock_settings):
-    """Provide A2ADaemonEngine instance for lifecycle flow tests."""
-    from unittest.mock import patch
-
-    with patch("a2a_daemon_engine.handlers.config.Config.initialize"):
-        engine = A2ADaemonEngine(mock_logger, **mock_settings)
-        return engine
+    """Provide A2ADaemonEngine instance for lifecycle flow tests with full initialization."""
+    # Create engine with full initialization (no mocking)
+    engine = A2ADaemonEngine(mock_logger, **mock_settings)
+    return engine
 
 
 @pytest.fixture(scope="function")
 def schema(a2a_daemon_engine, mock_settings, mock_logger):
     """Provide GraphQL introspection schema for testing (alias for consistency)."""
-    from silvaengine_utility import Graphql
+    from graphene import Schema
+    from a2a_daemon_engine.handlers.schema import Query, Mutations, type_class
+    from graphql import get_introspection_query, execute_sync, parse
 
-    endpoint_id = mock_settings.get("endpoint_id")
-    context = {
-        "endpoint_id": endpoint_id,
-        "setting": mock_settings,
-        "logger": mock_logger,
-    }
-    return Graphql.fetch_graphql_schema(context, "a2a_core_graphql")
+    # Create the Graphene schema with types
+    graphene_schema = Schema(query=Query, mutation=Mutations, types=type_class())
+
+    # Get introspection query, parse it, and execute it
+    introspection_query = get_introspection_query()
+    query_ast = parse(introspection_query)
+    result = execute_sync(graphene_schema.graphql_schema, query_ast)
+
+    # Return the __schema data which contains the types
+    return result.data.get("__schema", {})
 
 
 @pytest.fixture(scope="function")

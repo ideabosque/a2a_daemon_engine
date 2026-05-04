@@ -42,6 +42,7 @@ httpx = "^0.25.0"
 
 # GraphQL
 graphene = "^3.3"
+graphql-core = "^3.2.0"
 
 # Configuration
 python-dotenv = "^1.0.0"

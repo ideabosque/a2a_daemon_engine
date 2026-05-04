@@ -242,16 +242,170 @@ Update this plan when:
 - **Per-Release:** Validate all P0 tests pass before release
 - **Phase Completion:** Update when Phase 8 (Production Hardening) completes
 
+**Test Execution Status:** Cannot execute due to dependency conflicts (graphql package version mismatch). Tests defined but require dependency resolution before running.
+
 ---
 
-## 8. References
+## Appendix C - Test Execution Report
+
+### Test Discovery Results
+
+**Status:** ✅ Tests Discovered and Running
+
+**Environment:** Python 3.12.10 with venv at `c:/Python312/env`
+
+**Packages Installed:**
+- silvaengine-constants 0.0.1 ✅
+- silvaengine-utility 0.0.6 ✅
+- SilvaEngine-DynamoDB-Base 0.0.1 ✅
+- All other silvaengine dependencies ✅
+
+### Test Execution Summary (Latest Run - 2026-05-02)
+
+**Status:** ✅ Tests Running | **14 Passed, 9 Failed | 60.9% Pass Rate**
+
+**Environment:** Python 3.12.10 with venv at `c:/Python312/env/Scripts/python.exe`
+
+| Test File | Test Count | Type | Results |
+|-----------|------------|------|---------|
+| `test_a2a_mock_actions.py` | 14 tests | Mock/Unit | **14 passed** (100%) |
+| `test_ai_a2a_daemon_engine.py` | 9 tests | Integration | **9 failed** (0%) |
+
+---
+
+### Mock Tests Results ✅
+
+All 14 mock tests passing successfully:
+
+| Test Name | Status | Notes |
+|-----------|--------|-------|
+| `test_register_agent_mock` | ✅ PASSED | Handshake completed successfully |
+| `test_assign_task_mock` | ✅ PASSED | Task assigned successfully |
+| `test_route_message_mock` | ✅ PASSED | Message routed successfully |
+| `test_execute_task_mock` | ✅ PASSED | Task execution initiated |
+| `test_missing_action` | ✅ PASSED | Error handling correct |
+| `test_invalid_action` | ✅ PASSED | Error handling correct |
+| `test_register_agent_flow` | ✅ PASSED | Full flow validated |
+| `test_assign_task_flow` | ✅ PASSED | Full flow validated |
+| `test_route_message_flow` | ✅ PASSED | Full flow validated |
+| `test_execute_task_flow` | ✅ PASSED | Response validated |
+| `test_a2a_actions_parametrized` (4 tests) | ✅ PASSED | All parameter combinations work |
+
+**Total:** 14/14 mock tests passed (100%)
+
+---
+
+### Integration Tests Results ❌
+
+All 9 GraphQL lifecycle flow tests failing with JSON scalar parsing error:
+
+| Test Name | Error |
+|-----------|-------|
+| `test_graphql_ping` | ✅ **PASSED** |
+| `test_agent_lifecycle_flow[test_data0]` | ❌ JSON.parse_value() missing argument |
+| `test_agent_lifecycle_flow[test_data1]` | ❌ JSON.parse_value() missing argument |
+| `test_task_lifecycle_flow[test_data0]` | ❌ JSON.parse_value() missing argument |
+| `test_task_lifecycle_flow[test_data1]` | ❌ JSON.parse_value() missing argument |
+| `test_message_lifecycle_flow[test_data0]` | ❌ JSON.parse_value() missing argument |
+| `test_message_lifecycle_flow[test_data1]` | ❌ JSON.parse_value() missing argument |
+| `test_setting_lifecycle_flow[test_data0]` | ❌ JSON.parse_value() missing argument |
+| `test_setting_lifecycle_flow[test_data1]` | ❌ JSON.parse_value() missing argument |
+
+**Error Message:**
+```
+GraphQLError: Variable '$setting' got invalid value {...}; 
+Expected type 'JSON'. JSON.parse_value() missing 1 required positional argument: 'value'
+```
+
+---
+
+### Issues Resolution Status
+
+#### 1. ✅ RESOLVED - Dependency Chain
+- **Issue:** `ExecutionResult` and `get_introspection_query` import errors from graphql package
+- **Resolution:** Added compatibility imports in `silvaengine_utility/graphql.py` to handle both graphql v2 and v3
+- **Status:** All imports working correctly
+
+#### 2. ✅ RESOLVED - JWT Secret Key Configuration
+- **Issue:** Tests failed with `ValueError: Invalid JWT_SECRET_KEY: 'CHANGEME'`
+- **Resolution:** 
+  - Updated `conftest.py` SETTING dictionary with `jwt_secret_key`
+  - Updated `.env.example` with test JWT secret key
+  - Reinstalled silvaengine_utility with JSON export
+- **Status:** Configuration now passes validation
+
+#### 3. ✅ RESOLVED - JSON Import from silvaengine_utility
+- **Issue:** `ImportError: cannot import name 'JSON' from 'silvaengine_utility'`
+- **Resolution:** Added `JSON` to `__all__` and import list in `silvaengine_utility/__init__.py`
+- **Status:** JSON export working correctly
+
+#### 4. ❌ ACTIVE - JSON Scalar parse_value() Bug - CRITICAL
+- **Issue:** All GraphQL mutations with JSON-type fields fail
+- **Root Cause:** `JSON.parse_value()` method signature mismatch with Graphene expectations
+- **Impact:** All 9 lifecycle integration tests blocked
+- **Error:** `JSON.parse_value() missing 1 required positional argument: 'value'`
+- **Affected Fields:** `payload`, `setting`, `inputData`, `outputData`, `capabilities` in mutations
+- **File:** `silvaengine_utility/silvaengine_utility/graphql.py` line ~791
+- **Required Fix:** Update `JSON.parse_value()` to match Graphene scalar interface
+
+---
+
+### Current Blocker: JSON Scalar Bug
+
+**Technical Details:**
+
+The `JSON` scalar class at line 640 in `graphql.py` defines:
+```python
+@staticmethod
+def parse_value(value: Any) -> Any:
+    raw_value = JSON.identity(value)
+    return raw_value
+```
+
+But Graphene is calling it without the `value` argument, causing:
+```
+TypeError: parse_value() missing 1 required positional argument: 'value'
+```
+
+**Solution Needed:**
+Update the `JSON` scalar class to match Graphene's expected interface for custom scalars. The method should handle being called with the value from the GraphQL variable.
+
+---
+
+### Required Actions to Enable Full Testing
+
+**Immediate Fixes Needed:**
+1. ✅ JWT configuration - DONE
+2. ✅ JSON import - DONE  
+3. ⚠️ **Fix JSON scalar parse_value() bug in silvaengine_utility** (BLOCKING)
+4. ✅ Mock tests all passing
+
+**Run Tests:**
+```bash
+cd a2a_daemon_engine/tests
+
+# Run all tests
+AI_A2A_TEST_FUNCTION="" pytest -v --tb=short
+
+# Run only mock tests (all passing)
+pytest test_a2a_mock_actions.py -v
+
+# Run integration tests (blocked by JSON bug)
+pytest test_ai_a2a_daemon_engine.py -v
+```
+
+---
+
+## References
 
 - [A2A_DEVELOPMENT_PLAN.md](A2A_DEVELOPMENT_PLAN.md) - Phase 8 Testing Strategy
+- [a2a_daemon_engine/tests/README.md](../a2a_daemon_engine/tests/README.md) - Test Suite Documentation
 - [A2A Protocol Specification](https://a2a-protocol.org/v1.0.0/specification)
 - [pytest documentation](https://docs.pytest.org/)
 - [DynamoDB Local Guide](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html)
 
 ---
 
-**Last Updated:** 2026-05-02
-**Next Review:** 2026-06-02 (Phase 8 completion target)
+**Last Updated:** 2026-05-02 (Test Run Completed)  
+**Status:** 14/23 Tests Passing (60.9%) | Active Blocker: JSON Scalar Bug  
+**Next Review:** After JSON scalar fix in silvaengine_utility

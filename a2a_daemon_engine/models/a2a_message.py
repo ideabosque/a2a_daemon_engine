@@ -206,7 +206,7 @@ def resolve_a2a_message_list(info: ResolveInfo, **kwargs: Dict[str, Any]) -> Any
         "hash_key": "partition_key",
         "range_key": "message_id",
     },
-    range_key_required=False,
+    range_key_required=True,
     model_funct=get_a2a_message,
     count_funct=get_a2a_message_count,
     type_funct=get_a2a_message_type,

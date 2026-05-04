@@ -270,7 +270,7 @@ The a2a_daemon_engine is currently undergoing Phase 6 migration to A2A SDK v1.0.
 | CLI-6 | `a2a_jsonrpc.py:213` still uses `asyncio.run()` in sync wrapper | `a2a_jsonrpc.py:213` | Medium |
 | CLI-8 | TaskState enum still uses lowercase v0.3 names (`input_required`) - needs SCREAMING_SNAKE_CASE | `a2a_taskstore.py:206-208` | **High** |
 | CLI-9 | Missing `AUTH_REQUIRED` and `REJECTED` states in status map | `a2a_taskstore.py:_map_status_to_taskstate` | **High** |
-| CLI-11 | `list_tasks()` returns plain list, no cursor pagination (not v1.0 compliant) | `a2a_taskstore.py:352+` | Medium |
+| CLI-11 | `list_tasks()` now returns `(tasks, next_token)` using offset tokens over the current GraphQL wrapper; SDK RPC exposure and integration tests remain | `a2a_taskstore.py:352+` | Medium |
 | CLI-13 | Task model missing `contextId` field for session management | `models/a2a_task.py` | Medium |
 
 #### Task State Migration (v0.3 → v1.0)

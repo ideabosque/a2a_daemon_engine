@@ -225,7 +225,7 @@ def resolve_a2a_task_list(info: ResolveInfo, **kwargs: Dict[str, Any]) -> Any:
         "hash_key": "partition_key",
         "range_key": "task_id",
     },
-    range_key_required=False,
+    range_key_required=True,
     model_funct=get_a2a_task,
     count_funct=get_a2a_task_count,
     type_funct=get_a2a_task_type,

@@ -23,6 +23,10 @@ class A2ATaskType(ObjectType):
     created_at = DateTime()
     updated_at = DateTime()
     completed_at = DateTime()
+    # SDK compatibility fields
+    created_at_sdk = DateTime()
+    context_id = String()
+    last_modified = DateTime()
 
 
 class A2ATaskListType(ListObjectType):

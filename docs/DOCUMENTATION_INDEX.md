@@ -90,10 +90,10 @@ The repository currently contains these documentation files:
 
 📋 **Phase 6**: A2A SDK v1.0 Upgrade & Compatibility Audit
 - Dependency declaration updated to `a2a-sdk ^1.0.0`
-- TaskStore status mapping partially migrated to SCREAMING_SNAKE_CASE
+- TaskStore status mapping includes uppercase/lowercase compatibility; existing data migration still pending
 - `contextId`, `createdAt`, and `lastModified` model fields added
 - Still requires runtime verification against installed SDK v1.0
-- Still requires enum-casing cleanup, legacy JSON-RPC decisions, and tests
+- Still requires fresh SDK v1.0 verification, legacy JSON-RPC decisions, and tests
 
 📋 **Phase 7**: Streaming & Multi-Turn
 - `SendStreamingMessage` (SSE)

@@ -164,7 +164,7 @@ def resolve_a2a_setting_list(info: ResolveInfo, **kwargs: Dict[str, Any]) -> Any
         "hash_key": "partition_key",
         "range_key": "setting_id",
     },
-    range_key_required=False,
+    range_key_required=True,
     model_funct=get_a2a_setting,
     count_funct=get_a2a_setting_count,
     type_funct=get_a2a_setting_type,

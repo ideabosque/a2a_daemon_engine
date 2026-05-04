@@ -196,7 +196,7 @@ def resolve_a2a_agent_list(info: ResolveInfo, **kwargs: Dict[str, Any]) -> Any:
         "hash_key": "partition_key",
         "range_key": "agent_id",
     },
-    range_key_required=False,
+    range_key_required=True,
     model_funct=get_a2a_agent,
     count_funct=get_a2a_agent_count,
     type_funct=get_a2a_agent_type,
