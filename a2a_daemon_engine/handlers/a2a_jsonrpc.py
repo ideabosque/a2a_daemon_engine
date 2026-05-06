@@ -219,8 +219,6 @@ def process_a2a_jsonrpc_message_sync(
     """
     DEPRECATED: Synchronous wrapper for process_a2a_jsonrpc_message.
 
-    Used in serverless/Lambda contexts where async/await is not available.
-
     WARNING: This function is deprecated and will be removed in a future release.
     Use the SDK's DefaultRequestHandler instead.
 
@@ -240,9 +238,17 @@ def process_a2a_jsonrpc_message_sync(
         stacklevel=2,
     )
 
-    # Use ThreadPoolExecutor to avoid issues with nested event loops
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(
-            asyncio.run, process_a2a_jsonrpc_message(partition_key, message)
-        )
-        return future.result()
+    # FIXED (CLI-6): Use ThreadPoolExecutor with async helper instead of asyncio.run
+    # This avoids nested event loop issues in async contexts
+    async def _process():
+        return await process_a2a_jsonrpc_message(partition_key, message)
+
+    # Check if we're already in an async context
+    try:
+        loop = asyncio.get_running_loop()
+        # We're in an async context, use run_coroutine_threadsafe
+        future = asyncio.run_coroutine_threadsafe(_process(), loop)
+        return future.result(timeout=30)
+    except RuntimeError:
+        # No event loop running, safe to use asyncio.run
+        return asyncio.run(_process())

@@ -29,8 +29,16 @@ from .a2a_handlers import (
     handle_state_sync,
     handle_task_assignment,
 )
-from .a2a_jsonrpc import process_a2a_jsonrpc_message
 from .config import Config
+
+# Import A2A SDK types for JSON-RPC handling
+try:
+    from a2a.server.context import ServerCallContext
+    from a2a.types import SendMessageRequest, GetTaskRequest, CancelTaskRequest
+
+    HAS_A2A_SDK = True
+except ImportError:
+    HAS_A2A_SDK = False
 
 __author__ = "SilvaEngine Team"
 
@@ -723,36 +731,31 @@ async def list_agents(
 
 
 # ========================================
-# A2A JSON-RPC 2.0 Protocol Endpoint
+# A2A JSON-RPC 2.0 Protocol Endpoint (Migrated to SDK)
 # ========================================
 
 
 @app.post("/a2a-jsonrpc")
 async def handle_a2a_jsonrpc(request: Request) -> JSONResponse:
     """
-    Handle A2A JSON-RPC 2.0 requests via HTTP POST.
+    Handle A2A JSON-RPC 2.0 requests via HTTP POST using SDK DefaultRequestHandler.
 
-    This endpoint provides the same consolidated JSON-RPC handler used in serverless contexts.
-    It complements the native A2A SDK endpoint (/a2a-sdk) by providing a simplified JSON-RPC
-    interface for basic A2A operations.
+    This endpoint delegates to the A2A SDK's DefaultRequestHandler for proper
+    protocol compliance. It replaces the deprecated a2a_jsonrpc.py implementation.
 
     Example Request:
         POST /a2a-jsonrpc
         {
             "jsonrpc": "2.0",
-            "method": "agent.getCard",
-            "params": {},
+            "method": "message/send",
+            "params": {"message": {...}},
             "id": 1
         }
 
     Example Response:
         {
             "jsonrpc": "2.0",
-            "result": {
-                "name": "A2A Daemon Engine",
-                "capabilities": {...},
-                ...
-            },
+            "result": {"id": "task-123", "status": "SUBMITTED", ...},
             "id": 1
         }
     """
@@ -760,24 +763,60 @@ async def handle_a2a_jsonrpc(request: Request) -> JSONResponse:
         # Parse JSON-RPC request
         message = await request.json()
 
-        # Extract partition_key from headers or use default
+        # Check if A2A SDK is available
+        if not Config.a2a_server or not HAS_A2A_SDK:
+            return JSONResponse(
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32603,
+                        "message": "A2A SDK not available. Install with: pip install -e .[a2a]",
+                    },
+                    "id": message.get("id"),
+                },
+                status_code=503,
+            )
+
+        # Extract partition_key from headers
         partition_key = request.headers.get("Part-ID") or request.headers.get(
             "X-Partition-Key"
         )
 
-        # If no partition key in headers, try from query params
-        if not partition_key:
-            endpoint_id = request.query_params.get("endpoint_id")
-            part_id = request.query_params.get("part_id")
-            if endpoint_id and part_id:
-                partition_key = f"{endpoint_id}#{part_id}"
-            elif endpoint_id:
-                partition_key = endpoint_id
+        # Build request context
+        context = ServerCallContext(
+            agent_card=Config.a2a_server.agent_card,
+            partition_key=partition_key,
+        )
 
-        # Process JSON-RPC message using consolidated handler
-        response = await process_a2a_jsonrpc_message(partition_key, message)
+        # Get SDK request handler
+        request_handler = Config.a2a_server.request_handler
 
-        return JSONResponse(content=response)
+        # Route based on method
+        method = message.get("method", "")
+
+        if method == "message/send":
+            # Use SDK handler for message/send
+            send_request = SendMessageRequest(**message.get("params", {}))
+            response = await request_handler.on_message_send(send_request, context)
+            return JSONResponse(content=response.model_dump())
+        elif method == "tasks/get":
+            get_request = GetTaskRequest(**message.get("params", {}))
+            response = await request_handler.on_get_task(get_request, context)
+            return JSONResponse(content=response.model_dump())
+        elif method == "tasks/cancel":
+            cancel_request = CancelTaskRequest(**message.get("params", {}))
+            response = await request_handler.on_cancel_task(cancel_request, context)
+            return JSONResponse(content=response.model_dump())
+        else:
+            # Method not found
+            return JSONResponse(
+                content={
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32601, "message": f"Method not found: {method}"},
+                    "id": message.get("id"),
+                },
+                status_code=200,
+            )
 
     except Exception as e:
         if Config.logger:
@@ -787,13 +826,13 @@ async def handle_a2a_jsonrpc(request: Request) -> JSONResponse:
             content={
                 "jsonrpc": "2.0",
                 "error": {
-                    "code": -32700,
-                    "message": "Parse error",
+                    "code": -32603,
+                    "message": "Internal error",
                     "data": str(e),
                 },
                 "id": None,
             },
-            status_code=400,
+            status_code=500,
         )
 
 

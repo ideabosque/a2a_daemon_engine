@@ -262,12 +262,88 @@ class A2ADaemonEngine(object):
 
         # Check if this is an A2A SDK JSON-RPC request
         if "jsonrpc" in params and params.get("jsonrpc") == "2.0":
-            # A2A SDK JSON-RPC protocol - delegate to consolidated handler
-            from .handlers.a2a_jsonrpc import process_a2a_jsonrpc_message_sync
+            # A2A SDK JSON-RPC protocol - delegate to SDK handler (FIXED CLI-5/CLI-6)
+            # Use Config.a2a_server.request_handler for proper async handling
+            if not Config.a2a_server:
+                return Serializer.json_dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32603, "message": "A2A SDK not initialized"},
+                        "id": params.get("id"),
+                    }
+                )
 
+            # Get SDK request handler
+            request_handler = Config.a2a_server.request_handler
             partition_key = params.get("partition_key")
-            result = process_a2a_jsonrpc_message_sync(partition_key, params)
-            return Serializer.json_dumps(result)
+
+            # Build ServerCallContext
+            try:
+                from a2a.server.context import ServerCallContext
+                from a2a.types import (
+                    SendMessageRequest,
+                    GetTaskRequest,
+                    CancelTaskRequest,
+                )
+
+                context = ServerCallContext(
+                    agent_card=Config.a2a_server.agent_card,
+                    partition_key=partition_key,
+                )
+
+                method = params.get("method", "")
+
+                # Route to appropriate SDK handler using _run_async wrapper
+                if method == "message/send":
+                    send_request = SendMessageRequest(**params.get("params", {}))
+                    response = self._run_async(
+                        request_handler.on_message_send(send_request, context)
+                    )
+                    result = response.model_dump()
+                elif method == "tasks/get":
+                    get_request = GetTaskRequest(**params.get("params", {}))
+                    response = self._run_async(
+                        request_handler.on_get_task(get_request, context)
+                    )
+                    result = response.model_dump()
+                elif method == "tasks/cancel":
+                    cancel_request = CancelTaskRequest(**params.get("params", {}))
+                    response = self._run_async(
+                        request_handler.on_cancel_task(cancel_request, context)
+                    )
+                    result = response.model_dump()
+                else:
+                    result = {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32601,
+                            "message": f"Method not found: {method}",
+                        },
+                        "id": params.get("id"),
+                    }
+
+                return Serializer.json_dumps(result)
+
+            except ImportError as e:
+                return Serializer.json_dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "error": {
+                            "code": -32603,
+                            "message": f"A2A SDK types not available: {e}",
+                        },
+                        "id": params.get("id"),
+                    }
+                )
+            except Exception as e:
+                self.logger.error(f"Error handling JSON-RPC: {e}", exc_info=True)
+                return Serializer.json_dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32603, "message": str(e)},
+                        "id": params.get("id"),
+                    }
+                )
 
         # REST-style action-based requests
         action = params.pop("action", None)
