@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 A2A Daemon Engine - Unified API Test Script
 
@@ -22,7 +21,13 @@ import os
 import sys
 
 import pendulum
+import pytest
 import requests
+
+pytestmark = pytest.mark.skipif(
+    os.getenv("A2A_RUN_LIVE_API_TESTS", "").lower() not in {"1", "true", "yes"},
+    reason="Live API tests require a running daemon; set A2A_RUN_LIVE_API_TESTS=1",
+)
 
 
 # Try to import jose for JWT
@@ -81,7 +86,7 @@ def make_request(
 
         try:
             return response.status_code, response.json()
-        except:
+        except ValueError:
             return response.status_code, {"raw": response.text}
     except requests.exceptions.RequestException as e:
         return 0, {"error": str(e)}
@@ -258,7 +263,7 @@ def test_a2a_native_ping(base_url: str) -> bool:
             print(f"       Error: {data['error'].get('message')}")
         return True
     else:
-        print_result("A2A Native JSON-RPC", False, f"Invalid response")
+        print_result("A2A Native JSON-RPC", False, "Invalid response")
         return False
 
 
@@ -279,7 +284,7 @@ def test_a2a_getcard_expected(base_url: str) -> bool:
         print("       Note: Agent Card is at /.well-known/agent-card.json (HTTP GET)")
         return True
     else:
-        print_result("A2A GetCard", False, f"Unexpected response")
+        print_result("A2A GetCard", False, "Unexpected response")
         return False
 
 

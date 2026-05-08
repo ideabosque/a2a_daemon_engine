@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Pytest configuration and fixtures for A2A Daemon Engine tests.
 
@@ -10,7 +9,8 @@ import logging
 import os
 import re
 import sys
-from typing import Any, Dict, Sequence
+from collections.abc import Sequence
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -44,7 +44,7 @@ sys.path.insert(
     ),
 )
 
-from a2a_daemon_engine.main import A2ADaemonEngine
+from a2a_daemon_engine.main import A2ADaemonEngine  # noqa: E402
 
 # Setup logging
 logging.basicConfig(
@@ -66,7 +66,7 @@ SETTING = {
     "part_id": os.getenv("part_id", "test-part"),
     "transport": os.getenv("transport", "http"),
     "port": int(os.getenv("port", "8001")),
-    "initialize_tables": int(os.getenv("initialize_tables", "0")),
+    "initialize_tables": int(os.getenv("A2A_TEST_INITIALIZE_TABLES", "0")),
     "execute_mode": os.getenv("execute_mode", "local_for_all"),
     "jwt_secret_key": os.getenv(
         "jwt_secret_key", "test-secret-key-for-integration-testing-32chars"
@@ -84,10 +84,10 @@ SETTING["partition_key"] = f"{SETTING['endpoint_id']}#{SETTING['part_id']}"
 
 
 @pytest.fixture(scope="session")
-def test_data() -> Dict[str, Any]:
+def test_data() -> dict[str, Any]:
     """Load test data from JSON file."""
     if os.path.exists(TEST_DATA_FILE):
-        with open(TEST_DATA_FILE, "r") as f:
+        with open(TEST_DATA_FILE) as f:
             return json.load(f)
     return {}
 
@@ -130,6 +130,7 @@ def mock_engine(mock_logger, mock_settings):
 @pytest.fixture(scope="function")
 def a2a_daemon_engine(mock_logger, mock_settings):
     """Provide A2ADaemonEngine instance for lifecycle flow tests with full initialization."""
+    mock_settings["initialize_tables"] = int(os.getenv("A2A_TEST_INITIALIZE_TABLES", "0"))
     # Create engine with full initialization (no mocking)
     engine = A2ADaemonEngine(mock_logger, **mock_settings)
     return engine
@@ -139,8 +140,9 @@ def a2a_daemon_engine(mock_logger, mock_settings):
 def schema(a2a_daemon_engine, mock_settings, mock_logger):
     """Provide GraphQL introspection schema for testing (alias for consistency)."""
     from graphene import Schema
-    from a2a_daemon_engine.handlers.schema import Query, Mutations, type_class
-    from graphql import get_introspection_query, execute_sync, parse
+    from graphql import execute_sync, get_introspection_query, parse
+
+    from a2a_daemon_engine.handlers.schema import Mutations, Query, type_class
 
     # Create the Graphene schema with types
     graphene_schema = Schema(query=Query, mutation=Mutations, types=type_class())
@@ -158,7 +160,8 @@ def schema(a2a_daemon_engine, mock_settings, mock_logger):
 def graphql_schema():
     """Provide Graphene Schema object for testing."""
     from graphene import Schema
-    from a2a_daemon_engine.handlers.schema import Query, Mutations
+
+    from a2a_daemon_engine.handlers.schema import Mutations, Query
 
     return Schema(query=Query, mutation=Mutations)
 
@@ -242,6 +245,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "server: A2A server tests")
     config.addinivalue_line("markers", "graphql: GraphQL schema tests")
     config.addinivalue_line("markers", "cache: Cache configuration tests")
+    config.addinivalue_line(
+        "markers", "performance: Performance and load-oriented tests"
+    )
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 Agent Card Validator
 
@@ -9,7 +8,7 @@ This script checks compliance with A2A v1.0 Agent Card schema requirements.
 
 import json
 import sys
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 
 class AgentCardValidator:
@@ -46,13 +45,13 @@ class AgentCardValidator:
         "json",
     ]
 
-    def __init__(self, agent_card: Dict[str, Any]):
+    def __init__(self, agent_card: dict[str, Any]):
         self.agent_card = agent_card
-        self.errors: List[str] = []
-        self.warnings: List[str] = []
-        self.info: List[str] = []
+        self.errors: list[str] = []
+        self.warnings: list[str] = []
+        self.info: list[str] = []
 
-    def validate(self) -> Tuple[bool, List[str], List[str], List[str]]:
+    def validate(self) -> tuple[bool, list[str], list[str], list[str]]:
         """
         Run full validation of the Agent Card.
 
@@ -217,7 +216,7 @@ class AgentCardValidator:
 def validate_agent_card_file(filepath: str) -> bool:
     """Validate an Agent Card from a JSON file."""
     try:
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             agent_card = json.load(f)
     except FileNotFoundError:
         print(f"[ERROR] File not found: {filepath}")
@@ -229,7 +228,7 @@ def validate_agent_card_file(filepath: str) -> bool:
     return validate_agent_card(agent_card)
 
 
-def validate_agent_card(agent_card: Dict[str, Any]) -> bool:
+def validate_agent_card(agent_card: dict[str, Any]) -> bool:
     """Validate an Agent Card dictionary."""
     validator = AgentCardValidator(agent_card)
     is_valid, errors, warnings, info = validator.validate()

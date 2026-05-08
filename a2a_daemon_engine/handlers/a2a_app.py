@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 FastAPI Application for A2A Daemon Engine
 
@@ -13,14 +12,13 @@ Provides HTTP/REST API endpoints for A2A operations including:
 
 import os
 from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pendulum
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-
 from silvaengine_utility.serializer import Serializer
 
 from .a2a_handlers import (
@@ -34,7 +32,7 @@ from .config import Config
 # Import A2A SDK types for JSON-RPC handling
 try:
     from a2a.server.context import ServerCallContext
-    from a2a.types import SendMessageRequest, GetTaskRequest, CancelTaskRequest
+    from a2a.types import CancelTaskRequest, GetTaskRequest, SendMessageRequest
 
     HAS_A2A_SDK = True
 except ImportError:
@@ -43,7 +41,7 @@ except ImportError:
 __author__ = "SilvaEngine Team"
 
 
-def _resolve_cors_origins() -> List[str]:
+def _resolve_cors_origins() -> list[str]:
     """
     Resolve CORS origins from the A2A_CORS_ORIGINS environment variable.
 
@@ -60,7 +58,7 @@ def _resolve_cors_origins() -> List[str]:
     return origins or ["*"]
 
 
-def _get_partition_key(endpoint_id: str, request: Request) -> Tuple[str, str | None]:
+def _get_partition_key(endpoint_id: str, request: Request) -> tuple[str, str | None]:
     """
     Construct partition key from endpoint_id and optional part_id.
 
@@ -316,9 +314,9 @@ class AgentRegistration(BaseModel):
 
     agent_id: str = Field(..., description="Agent identifier")
     agent_name: str = Field(..., description="Human-readable agent name")
-    capabilities: List[str] = Field(..., description="List of agent capabilities")
+    capabilities: list[str] = Field(..., description="List of agent capabilities")
     endpoint_url: str = Field(..., description="Agent communication endpoint")
-    metadata: Optional[Dict[str, Any]] = Field(
+    metadata: dict[str, Any] | None = Field(
         default={}, description="Additional metadata"
     )
 
@@ -326,18 +324,18 @@ class AgentRegistration(BaseModel):
 class TaskCreation(BaseModel):
     """Task creation request"""
 
-    task_id: Optional[str] = Field(
+    task_id: str | None = Field(
         None, description="Task identifier (auto-generated if not provided)"
     )
     task_type: str = Field(..., description="Type of task")
-    assigned_agent_id: Optional[str] = Field(
+    assigned_agent_id: str | None = Field(
         None, description="Agent to assign task to"
     )
     priority: str = Field(
         default="medium", description="Task priority (low/medium/high/critical)"
     )
-    input_data: Dict[str, Any] = Field(..., description="Task input data")
-    required_capabilities: Optional[List[str]] = Field(
+    input_data: dict[str, Any] = Field(..., description="Task input data")
+    required_capabilities: list[str] | None = Field(
         default=[], description="Required agent capabilities"
     )
 
@@ -345,20 +343,20 @@ class TaskCreation(BaseModel):
 class MessageData(BaseModel):
     """Message routing request"""
 
-    message_id: Optional[str] = Field(
+    message_id: str | None = Field(
         None, description="Message identifier (auto-generated if not provided)"
     )
     from_agent_id: str = Field(..., description="Source agent identifier")
     to_agent_id: str = Field(..., description="Destination agent identifier")
     message_type: str = Field(..., description="Type of message")
-    payload: Dict[str, Any] = Field(..., description="Message payload")
+    payload: dict[str, Any] = Field(..., description="Message payload")
 
 
 class StateSync(BaseModel):
     """State synchronization request"""
 
     agent_id: str = Field(..., description="Agent identifier")
-    state_data: Dict[str, Any] = Field(..., description="State data to synchronize")
+    state_data: dict[str, Any] = Field(..., description="State data to synchronize")
 
 
 # ========================================
@@ -372,7 +370,7 @@ async def register_agent(
     request: Request,
     agent_data: AgentRegistration,
     user: dict = Depends(current_user),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Register a new agent in the A2A network.
 
@@ -431,7 +429,7 @@ async def agent_handshake(
     request: Request,
     agent_data: AgentRegistration,
     user: dict = Depends(current_user),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Perform agent handshake and capability negotiation.
 
@@ -475,7 +473,7 @@ async def create_task(
     request: Request,
     task_data: TaskCreation,
     user: dict = Depends(current_user),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Create and assign a task to an agent.
 
@@ -529,7 +527,7 @@ async def get_agent_status(
     agent_id: str,
     request: Request,
     user: dict = Depends(current_user),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get current status of a specific agent.
 
@@ -594,7 +592,7 @@ async def send_message(
     request: Request,
     message: MessageData,
     user: dict = Depends(current_user),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Send a message to a specific agent.
 
@@ -649,7 +647,7 @@ async def sync_agent_state(
     request: Request,
     state: StateSync,
     user: dict = Depends(current_user),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Synchronize agent state.
 
@@ -689,9 +687,9 @@ async def sync_agent_state(
 async def list_agents(
     endpoint_id: str,
     request: Request,
-    status: Optional[str] = None,
+    status: str | None = None,
     user: dict = Depends(current_user),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     List all agents in the network.
 
@@ -837,7 +835,7 @@ async def handle_a2a_jsonrpc(request: Request) -> JSONResponse:
 
 
 @app.get("/a2a-jsonrpc")
-async def get_a2a_jsonrpc_info() -> Dict[str, Any]:
+async def get_a2a_jsonrpc_info() -> dict[str, Any]:
     """
     GET endpoint to show JSON-RPC endpoint info.
 

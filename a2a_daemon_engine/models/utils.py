@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
 __author__ = "bibow"
 
 import logging
-from typing import List
 
 
 def initialize_tables(logger: logging.Logger) -> None:
@@ -11,7 +9,7 @@ def initialize_tables(logger: logging.Logger) -> None:
     from .a2a_setting import A2ASettingModel
     from .a2a_task import A2ATaskModel
 
-    models: List = [A2AAgentModel, A2ATaskModel, A2AMessageModel, A2ASettingModel]
+    models: list = [A2AAgentModel, A2ATaskModel, A2AMessageModel, A2ASettingModel]
 
     for model in models:
         if model.exists():

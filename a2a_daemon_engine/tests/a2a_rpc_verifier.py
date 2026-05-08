@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 A2A Phase 6 RPC Verification Script
 
@@ -21,7 +20,6 @@ import json
 import logging
 import sys
 from dataclasses import dataclass
-from typing import Dict, List, Optional
 
 __author__ = "SilvaEngine Team"
 __version__ = "1.0.0"
@@ -32,21 +30,21 @@ class RPCVerificationResult:
     """Result of RPC method verification."""
     operation: str
     implemented: bool
-    method: Optional[str] = None
-    signature: Optional[str] = None
-    error: Optional[str] = None
+    method: str | None = None
+    signature: str | None = None
+    error: str | None = None
 
 
 class A2ARPCVerifier:
     """
     Verifies A2A v1.0 RPC operation implementations.
-    
+
     Checks:
     - Method signatures match specification
     - Required parameters present
     - Proper return types
     """
-    
+
     # A2A v1.0 RPC Operations
     RPC_OPERATIONS = {
         "tasks/send": {
@@ -100,32 +98,32 @@ class A2ARPCVerifier:
             "optional_params": ["authentication"],
         },
     }
-    
-    def __init__(self, logger: Optional[logging.Logger] = None):
+
+    def __init__(self, logger: logging.Logger | None = None):
         """Initialize RPC verifier."""
         self.logger = logger or logging.getLogger(__name__)
-        self.results: List[RPCVerificationResult] = []
-    
+        self.results: list[RPCVerificationResult] = []
+
     def verify_all_operations(self) -> bool:
         """
         Verify all RPC operations.
-        
+
         Returns:
             True if all operations verified, False otherwise
         """
         self.results = []
-        
+
         # Verify each operation
         for operation, spec in self.RPC_OPERATIONS.items():
             result = self._verify_operation(operation, spec)
             self.results.append(result)
-        
+
         return all(r.implemented for r in self.results)
-    
-    def _verify_operation(self, operation: str, spec: Dict) -> RPCVerificationResult:
+
+    def _verify_operation(self, operation: str, spec: dict) -> RPCVerificationResult:
         """Verify a single RPC operation."""
         method_name = operation.replace("/", "_").replace(".", "_")
-        
+
         # Map operations to implementation locations
         impl_map = {
             "tasks/send": ("a2a_daemon_engine.handlers.a2a_executor", "A2ADaemonExecutor", "execute"),
@@ -139,37 +137,37 @@ class A2ARPCVerifier:
             "tasks/pushNotification/delete": ("a2a_daemon_engine.handlers.a2a_pushconfig", "PushNotificationManager", "delete_push_config"),
             "agent/getExtendedCard": ("a2a_daemon_engine.handlers.a2a_extended_card", "ExtendedAgentCardManager", "get_extended_card"),
         }
-        
+
         if operation not in impl_map:
             return RPCVerificationResult(
                 operation=operation,
                 implemented=False,
                 error="No implementation mapping found",
             )
-        
+
         module_name, class_name, method_name = impl_map[operation]
-        
+
         try:
             # Try to import the module
             module = importlib.import_module(module_name)
-            
+
             # Get the class
             cls = getattr(module, class_name)
-            
+
             # Get the method
             method = getattr(cls, method_name)
-            
+
             # Get signature
             sig = inspect.signature(method)
             sig_str = str(sig)
-            
+
             return RPCVerificationResult(
                 operation=operation,
                 implemented=True,
                 method=f"{class_name}.{method_name}",
                 signature=sig_str,
             )
-            
+
         except ImportError as e:
             # Module not available (likely due to missing SDK)
             return RPCVerificationResult(
@@ -190,7 +188,7 @@ class A2ARPCVerifier:
                 implemented=False,
                 error=str(e),
             )
-    
+
     def print_report(self) -> None:
         """Print verification report."""
         print("\n" + "=" * 80)
@@ -198,25 +196,23 @@ class A2ARPCVerifier:
         print("=" * 80)
         print(f"Version: {__version__}")
         print("-" * 80)
-        
+
         implemented = sum(1 for r in self.results if r.implemented)
-        not_implemented = len(self.results) - implemented
-        
         for result in self.results:
             status = "[OK] Implemented" if result.implemented else "[MISSING] Not Found"
             print(f"\n{status}: {result.operation}")
-            
+
             if result.method:
                 print(f"  Location: {result.method}")
             if result.signature:
                 print(f"  Signature: {result.signature}")
             if result.error:
                 print(f"  Note: {result.error}")
-        
+
         print("\n" + "-" * 80)
         print(f"Summary: {implemented}/{len(self.results)} operations verified")
         print("=" * 80 + "\n")
-    
+
     def to_json(self) -> str:
         """Export results as JSON."""
         return json.dumps({
@@ -248,7 +244,7 @@ Examples:
   python a2a_rpc_verifier.py --verbose
         """,
     )
-    
+
     parser.add_argument(
         "--json", "-j",
         action="store_true",
@@ -259,26 +255,26 @@ Examples:
         action="store_true",
         help="Enable verbose output",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Configure logging
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-    
+
     logger = logging.getLogger("a2a_rpc_verifier")
-    
+
     # Run verification
     verifier = A2ARPCVerifier(logger=logger)
     all_implemented = verifier.verify_all_operations()
-    
+
     if args.json:
         print(verifier.to_json())
     else:
         verifier.print_report()
-    
+
     sys.exit(0 if all_implemented else 1)
 
 

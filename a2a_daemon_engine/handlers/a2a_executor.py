@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 A2A Daemon Executor - Canonical A2A SDK Pattern
 
@@ -15,17 +14,49 @@ This executor follows the official pattern:
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 # A2A SDK imports - Based on official samples
 # https://github.com/a2aproject/a2a-samples/blob/main/samples/python/agents/helloworld/agent_executor.py
 # https://github.com/a2aproject/a2a-samples/blob/main/samples/python/agents/travel_planner_agent/agent_executor.py
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
-from a2a.utils import new_agent_text_message
+from a2a.types import Message, Part, Role, TaskState, TaskStatus, TaskStatusUpdateEvent
+
+try:
+    from a2a.utils import new_agent_text_message
+except ImportError:
+    new_agent_text_message = None
 
 __author__ = "SilvaEngine Team"
+
+
+_TASK_STATE_ALIASES = {
+    "submitted": "TASK_STATE_SUBMITTED",
+    "working": "TASK_STATE_WORKING",
+    "completed": "TASK_STATE_COMPLETED",
+    "failed": "TASK_STATE_FAILED",
+    "canceled": "TASK_STATE_CANCELED",
+    "input_required": "TASK_STATE_INPUT_REQUIRED",
+    "rejected": "TASK_STATE_REJECTED",
+    "auth_required": "TASK_STATE_AUTH_REQUIRED",
+}
+
+
+def _install_task_state_aliases() -> None:
+    """Expose older enum-style attributes when the SDK uses protobuf wrappers."""
+    if not hasattr(TaskState, "Value"):
+        return
+
+    for alias, proto_name in _TASK_STATE_ALIASES.items():
+        if not hasattr(TaskState, alias):
+            try:
+                setattr(TaskState, alias, TaskState.Value(proto_name))
+            except ValueError:
+                continue
+
+
+_install_task_state_aliases()
 
 
 def _task_state(name: str) -> TaskState:
@@ -39,6 +70,12 @@ def _task_state(name: str) -> TaskState:
         return getattr(TaskState, name)
     if hasattr(TaskState, name.lower()):
         return getattr(TaskState, name.lower())
+    if hasattr(TaskState, "Value"):
+        proto_name = f"TASK_STATE_{name.upper()}"
+        try:
+            return TaskState.Value(proto_name)
+        except ValueError:
+            pass
     aliases = {
         "AUTH_REQUIRED": "INPUT_REQUIRED",
         "REJECTED": "FAILED",
@@ -52,6 +89,25 @@ def _task_state(name: str) -> TaskState:
         if hasattr(TaskState, alias.lower()):
             return getattr(TaskState, alias.lower())
     raise AttributeError(f"TaskState has no member for {name}")
+
+
+def _status_update_event(state: TaskState, **kwargs: Any) -> TaskStatusUpdateEvent:
+    """Create status events across pydantic and protobuf SDK releases."""
+    try:
+        return TaskStatusUpdateEvent(state=state, **kwargs)
+    except ValueError:
+        return TaskStatusUpdateEvent(status=TaskStatus(state=state))
+
+
+def _agent_text_message(text: str) -> Any:
+    """Create an agent text message across SDK releases."""
+    if new_agent_text_message is not None:
+        return new_agent_text_message(text)
+
+    return Message(
+        role=Role.ROLE_AGENT,
+        parts=[Part(text=text)],
+    )
 
 
 class A2ADaemonExecutor(AgentExecutor):
@@ -72,7 +128,7 @@ class A2ADaemonExecutor(AgentExecutor):
     """
 
     def __init__(
-        self, logger: logging.Logger, config: Any, task_store: Optional[Any] = None, streaming_manager: Optional[Any] = None
+        self, logger: logging.Logger, config: Any, task_store: Any | None = None, streaming_manager: Any | None = None
     ):
         """
         Initialize the daemon executor.
@@ -110,9 +166,7 @@ class A2ADaemonExecutor(AgentExecutor):
             if not user_input:
                 error_msg = "No user input provided in request context"
                 self.logger.error(error_msg)
-                await event_queue.put(
-                    TaskStatusUpdateEvent(state=_task_state("FAILED"), error=error_msg)
-                )
+                await event_queue.put(_status_update_event(_task_state("FAILED")))
                 return
 
             # Extract partition key from context (our multi-tenant extension)
@@ -146,15 +200,11 @@ class A2ADaemonExecutor(AgentExecutor):
             else:
                 error_msg = f"Unknown operation: {operation}"
                 self.logger.error(error_msg)
-                await event_queue.put(
-                    TaskStatusUpdateEvent(state=_task_state("FAILED"), error=error_msg)
-                )
+                await event_queue.put(_status_update_event(_task_state("FAILED")))
 
         except Exception as e:
             self.logger.error(f"Task execution failed: {e}", exc_info=True)
-            await event_queue.put(
-                TaskStatusUpdateEvent(state=_task_state("FAILED"), error=str(e))
-            )
+            await event_queue.put(_status_update_event(_task_state("FAILED")))
 
     async def _handle_task_execution(
         self,
@@ -180,7 +230,7 @@ class A2ADaemonExecutor(AgentExecutor):
         self.logger.info(f"Assigning task: {task_data.get('id', 'new')}")
 
         # Emit working status
-        await event_queue.put(TaskStatusUpdateEvent(state=_task_state("WORKING")))
+        await event_queue.put(_status_update_event(_task_state("WORKING")))
 
         # Execute task via existing handler
         result = await handle_task_assignment(partition_key, task_data)
@@ -189,12 +239,12 @@ class A2ADaemonExecutor(AgentExecutor):
         result_text = (
             f"Task {result.get('id')} assigned to agent {result.get('agent_id')}"
         )
-        event = new_agent_text_message(result_text)
+        event = _agent_text_message(result_text)
         await event_queue.put(event)
 
         # Emit completion status
         await event_queue.put(
-            TaskStatusUpdateEvent(state=_task_state("COMPLETED"), result=result)
+            _status_update_event(_task_state("COMPLETED"))
         )
 
         self.logger.info(f"Task {result.get('id')} completed successfully")
@@ -235,7 +285,7 @@ class A2ADaemonExecutor(AgentExecutor):
         # Emit result
         delivery_status = "initiated" if result.get("status") == "success" else "failed"
         result_text = f"Message {result.get('data', {}).get('id', 'unknown')} routed and delivery {delivery_status}"
-        event = new_agent_text_message(result_text)
+        event = _agent_text_message(result_text)
         await event_queue.put(event)
 
         # Emit completion status
@@ -244,7 +294,7 @@ class A2ADaemonExecutor(AgentExecutor):
             if result.get("status") == "success"
             else _task_state("FAILED")
         )
-        await event_queue.put(TaskStatusUpdateEvent(state=final_state, result=result))
+        await event_queue.put(_status_update_event(final_state))
 
         self.logger.info(f"Message routed successfully, delivery {delivery_status}")
 
@@ -273,12 +323,12 @@ class A2ADaemonExecutor(AgentExecutor):
 
         # Emit result
         result_text = f"Agent {result.get('id')} registered successfully"
-        event = new_agent_text_message(result_text)
+        event = _agent_text_message(result_text)
         await event_queue.put(event)
 
         # Emit completion status
         await event_queue.put(
-            TaskStatusUpdateEvent(state=_task_state("COMPLETED"), result=result)
+            _status_update_event(_task_state("COMPLETED"))
         )
 
         self.logger.info(f"Agent {result.get('id')} registered successfully")

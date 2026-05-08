@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Test helpers and utilities for A2A Daemon Engine tests.
 """
@@ -10,7 +9,7 @@ import sys
 import time
 import uuid
 from functools import wraps
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from unittest.mock import MagicMock
 
 # Add parent directory to path to allow imports when running directly
@@ -46,7 +45,7 @@ def create_test_context(endpoint_id: str = "test-endpoint", part_id: str = "test
 class A2ATestDataBuilder:
     """Builder class for creating A2A test data with relationships."""
 
-    def __init__(self, test_data: Dict[str, Any] = None):
+    def __init__(self, test_data: dict[str, Any] = None):
         self.test_data = test_data or {}
         self.created_entities = {}
 
@@ -103,9 +102,9 @@ class A2ATestDataBuilder:
 def call_method(
     engine: Any,
     method_name: str,
-    arguments: Optional[Dict[str, Any]] = None,
-    label: Optional[str] = None,
-) -> Tuple[Optional[Any], Optional[Exception]]:
+    arguments: dict[str, Any] | None = None,
+    label: str | None = None,
+) -> tuple[Any | None, Exception | None]:
     """
     Invoke engine methods with consistent logging and error capture.
 
@@ -157,7 +156,12 @@ def call_method(
                 pass
 
         # Wrap GraphQL response in standard format if not already wrapped
-        if isinstance(result, dict) and "data" not in result and "errors" not in result:
+        if (
+            isinstance(result, dict)
+            and "data" not in result
+            and "errors" not in result
+            and "status" not in result
+        ):
             result = {"data": result}
 
         elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
@@ -179,9 +183,9 @@ def call_method(
 def call_a2a_method(
     engine: Any,
     action: str,
-    arguments: Optional[Dict[str, Any]] = None,
-    label: Optional[str] = None,
-) -> Tuple[Optional[Any], Optional[Exception]]:
+    arguments: dict[str, Any] | None = None,
+    label: str | None = None,
+) -> tuple[Any | None, Exception | None]:
     """
     Invoke the engine's A2A action entrypoint with consistent logging.
 
@@ -235,9 +239,9 @@ def log_test_result(func):
 
 
 def validate_a2a_response(
-    result: Dict[str, Any],
+    result: dict[str, Any],
     expected_status: str = "success",
-    expected_keys: List[str] = None,
+    expected_keys: list[str] = None,
 ) -> None:
     """
     Validate that A2A response has expected structure.

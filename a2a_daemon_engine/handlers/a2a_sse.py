@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 A2A Server-Sent Events (SSE) Streaming Implementation
 
@@ -13,10 +12,10 @@ Implements Server-Sent Events for:
 
 Usage:
     from a2a_daemon_engine.handlers.a2a_sse import SSEEventQueue, StreamingTaskManager
-    
+
     # Create SSE-enabled task store
     sse_queue = SSEEventQueue(task_store, max_events_per_task=100)
-    
+
     # Stream events for a task
     async for event in sse_queue.subscribe(task_id, last_event_id=None):
         yield event
@@ -26,7 +25,8 @@ import asyncio
 import json
 import logging
 from collections import deque
-from typing import AsyncIterable, Dict, List, Optional, Any
+from collections.abc import AsyncIterable
+from typing import Any
 
 import pendulum
 from starlette.responses import StreamingResponse
@@ -38,20 +38,20 @@ __version__ = "1.0.0"
 class SSEEvent:
     """
     Represents a Server-Sent Event for A2A streaming.
-    
+
     Follows A2A SDK patterns for task status updates and artifact events.
     """
-    
+
     def __init__(
         self,
         event_type: str,
-        data: Dict[str, Any],
-        event_id: Optional[str] = None,
-        retry_ms: Optional[int] = None
+        data: dict[str, Any],
+        event_id: str | None = None,
+        retry_ms: int | None = None
     ):
         """
         Initialize SSE event.
-        
+
         Args:
             event_type: Event type (task_status, task_artifact, etc.)
             data: Event payload data
@@ -62,25 +62,25 @@ class SSEEvent:
         self.data = data
         self.event_id = event_id or f"evt-{pendulum.now('UTC').timestamp()}"
         self.retry_ms = retry_ms
-    
+
     def to_sse_format(self) -> str:
         """Convert event to SSE format string."""
         lines = []
-        
+
         if self.event_id:
             lines.append(f"id: {self.event_id}")
-        
+
         if self.event_type:
             lines.append(f"event: {self.event_type}")
-        
+
         if self.retry_ms:
             lines.append(f"retry: {self.retry_ms}")
-        
+
         # Data can be multi-line
         data_str = json.dumps(self.data) if isinstance(self.data, dict) else str(self.data)
         for line in data_str.split('\n'):
             lines.append(f"data: {line}")
-        
+
         lines.append("")  # Empty line terminates event
         return "\n".join(lines)
 
@@ -88,22 +88,22 @@ class SSEEvent:
 class SSEEventQueue:
     """
     Event queue with SSE support and replay buffer.
-    
+
     Implements Phase 7 requirements:
     - Event-driven streaming to clients
     - Last-Event-ID support for reconnections
     - Ring buffer of last 100 events per task
     """
-    
+
     def __init__(
         self,
         task_store: Any,
         max_events_per_task: int = 100,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ):
         """
         Initialize SSE event queue.
-        
+
         Args:
             task_store: TaskStore instance for persistence
             max_events_per_task: Maximum events to retain per task (default: 100)
@@ -112,20 +112,20 @@ class SSEEventQueue:
         self.task_store = task_store
         self.max_events_per_task = max_events_per_task
         self.logger = logger or logging.getLogger(__name__)
-        
+
         # Event buffer: task_id -> deque of events (ring buffer)
-        self._event_buffers: Dict[str, deque] = {}
-        
+        self._event_buffers: dict[str, deque] = {}
+
         # Active subscriptions: task_id -> set of queues
-        self._subscriptions: Dict[str, set] = {}
-        
+        self._subscriptions: dict[str, set] = {}
+
         # Lock for thread safety
         self._lock = asyncio.Lock()
-    
+
     async def put(self, task_id: str, event: SSEEvent) -> None:
         """
         Add event to queue and broadcast to subscribers.
-        
+
         Args:
             task_id: Task identifier
             event: SSE event to add
@@ -134,10 +134,10 @@ class SSEEventQueue:
             # Initialize buffer if needed
             if task_id not in self._event_buffers:
                 self._event_buffers[task_id] = deque(maxlen=self.max_events_per_task)
-            
+
             # Add to ring buffer
             self._event_buffers[task_id].append(event)
-            
+
             # Broadcast to active subscribers
             if task_id in self._subscriptions:
                 dead_queues = set()
@@ -146,38 +146,38 @@ class SSEEventQueue:
                         await queue.put(event)
                     except Exception:
                         dead_queues.add(queue)
-                
+
                 # Remove dead queues
                 self._subscriptions[task_id] -= dead_queues
-        
+
         self.logger.debug(f"Event added to task {task_id}: {event.event_type}")
-    
+
     async def subscribe(
         self,
         task_id: str,
-        last_event_id: Optional[str] = None
+        last_event_id: str | None = None
     ) -> AsyncIterable[SSEEvent]:
         """
         Subscribe to events for a task with replay support.
-        
+
         Implements Phase 7 Task 2: SubscribeToTask with Last-Event-ID
-        
+
         Args:
             task_id: Task to subscribe to
             last_event_id: Last event ID received (for replay/reconnect)
-            
+
         Yields:
             SSEEvent objects
         """
         # Create subscription queue
         queue: asyncio.Queue[SSEEvent] = asyncio.Queue()
-        
+
         async with self._lock:
             # Initialize subscription set
             if task_id not in self._subscriptions:
                 self._subscriptions[task_id] = set()
             self._subscriptions[task_id].add(queue)
-            
+
             # Replay missed events if Last-Event-ID provided
             if last_event_id and task_id in self._event_buffers:
                 replay_started = False
@@ -186,12 +186,12 @@ class SSEEventQueue:
                         await queue.put(event)
                     elif event.event_id == last_event_id:
                         replay_started = True
-                
+
                 if replay_started:
                     self.logger.info(
                         f"Replayed events after {last_event_id} for task {task_id}"
                     )
-        
+
         try:
             # Yield events from queue
             while True:
@@ -205,7 +205,7 @@ class SSEEventQueue:
             async with self._lock:
                 if task_id in self._subscriptions:
                     self._subscriptions[task_id].discard(queue)
-    
+
     async def close_task(self, task_id: str) -> None:
         """Close all subscriptions for a task."""
         async with self._lock:
@@ -214,7 +214,7 @@ class SSEEventQueue:
                 for queue in self._subscriptions[task_id]:
                     await queue.put(None)  # Sentinel value
                 del self._subscriptions[task_id]
-            
+
             if task_id in self._event_buffers:
                 del self._event_buffers[task_id]
 
@@ -222,38 +222,38 @@ class SSEEventQueue:
 class StreamingTaskManager:
     """
     Manages streaming task execution with SSE.
-    
+
     Bridges between A2A SDK streaming and SSE transport.
     """
-    
+
     def __init__(
         self,
         event_queue: SSEEventQueue,
-        logger: Optional[logging.Logger] = None
+        logger: logging.Logger | None = None
     ):
         """
         Initialize streaming task manager.
-        
+
         Args:
             event_queue: SSE event queue for broadcasting
             logger: Optional logger instance
         """
         self.event_queue = event_queue
         self.logger = logger or logging.getLogger(__name__)
-    
+
     async def emit_task_status(
         self,
         task_id: str,
         state: str,
-        message: Optional[str] = None,
-        artifacts: Optional[List[Dict]] = None
+        message: str | None = None,
+        artifacts: list[dict] | None = None
     ) -> None:
         """
         Emit task status update event.
-        
+
         Phase 7 Task 3: Emit INPUT_REQUIRED transitions
         Phase 7 Task 4: Emit AUTH_REQUIRED transitions
-        
+
         Args:
             task_id: Task identifier
             state: Task state (working, input_required, auth_required, etc.)
@@ -270,18 +270,18 @@ class StreamingTaskManager:
                 "timestamp": pendulum.now("UTC").to_iso8601_string()
             }
         )
-        
+
         await self.event_queue.put(task_id, event)
         self.logger.debug(f"Task status emitted: {task_id} -> {state}")
-    
+
     async def emit_task_artifact(
         self,
         task_id: str,
-        artifact: Dict[str, Any]
+        artifact: dict[str, Any]
     ) -> None:
         """
         Emit task artifact event.
-        
+
         Args:
             task_id: Task identifier
             artifact: Artifact data (output, chunks, etc.)
@@ -294,20 +294,20 @@ class StreamingTaskManager:
                 "timestamp": pendulum.now("UTC").to_iso8601_string()
             }
         )
-        
+
         await self.event_queue.put(task_id, event)
-    
+
     async def emit_input_required(
         self,
         task_id: str,
         prompt: str,
-        options: Optional[List[str]] = None
+        options: list[str] | None = None
     ) -> None:
         """
         Emit INPUT_REQUIRED state for multi-turn conversations.
-        
+
         Phase 7 Task 3: Multi-turn conversation support
-        
+
         Args:
             task_id: Task identifier
             prompt: Prompt message for user input
@@ -320,18 +320,18 @@ class StreamingTaskManager:
             artifacts=[{"type": "input_request", "options": options}] if options else None
         )
         self.logger.info(f"Task {task_id} awaiting user input")
-    
+
     async def emit_auth_required(
         self,
         task_id: str,
         auth_url: str,
-        scopes: Optional[List[str]] = None
+        scopes: list[str] | None = None
     ) -> None:
         """
         Emit AUTH_REQUIRED state for authentication flows.
-        
+
         Phase 7 Task 4: Authentication-required state handling
-        
+
         Args:
             task_id: Task identifier
             auth_url: URL for authentication
@@ -348,19 +348,19 @@ class StreamingTaskManager:
             }]
         )
         self.logger.info(f"Task {task_id} awaiting authentication")
-    
+
     def create_sse_response(
         self,
         task_id: str,
-        last_event_id: Optional[str] = None
+        last_event_id: str | None = None
     ) -> StreamingResponse:
         """
         Create Starlette StreamingResponse for SSE.
-        
+
         Args:
             task_id: Task to stream
             last_event_id: Last event ID for replay
-            
+
         Returns:
             StreamingResponse configured for SSE
         """
@@ -369,7 +369,7 @@ class StreamingTaskManager:
                 if event is None:
                     break
                 yield event.to_sse_format().encode('utf-8')
-        
+
         return StreamingResponse(
             event_generator(),
             media_type="text/event-stream",
@@ -384,20 +384,20 @@ class StreamingTaskManager:
 def create_sse_endpoints(app: Any, streaming_manager: StreamingTaskManager) -> None:
     """
     Register SSE endpoints on FastAPI/Starlette app.
-    
+
     Args:
         app: FastAPI/Starlette application
         streaming_manager: StreamingTaskManager instance
     """
     from starlette.routing import Route
-    
+
     async def subscribe_to_task(request):
         """Handle SubscribeToTask SSE endpoint."""
         task_id = request.path_params.get("task_id")
         last_event_id = request.headers.get("Last-Event-ID")
-        
+
         return streaming_manager.create_sse_response(task_id, last_event_id)
-    
+
     # Add route
     app.routes.append(
         Route("/tasks/{task_id}/stream", endpoint=subscribe_to_task)

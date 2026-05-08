@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 Unit Tests for A2A Executor
 
@@ -36,7 +35,7 @@ class TestTaskStateHelper:
         # Helper tries uppercase first, falls back to lowercase
         result = _task_state("WORKING")
         assert result == TaskState.working
-        
+
         result = _task_state("COMPLETED")
         assert result == TaskState.completed
 
@@ -113,10 +112,10 @@ class TestA2ADaemonExecutor:
         executor.task_store = Mock()
         executor.task_store.get = AsyncMock(return_value=None)
         executor.task_store.save = AsyncMock()
-        
+
         # Should not raise error
         await executor.cancel("non-existent-task-id")
-        
+
         # Should try to get but not save
         executor.task_store.get.assert_called_once()
         # Note: The actual code saves even when not found, test reflects actual behavior
@@ -127,14 +126,14 @@ class TestA2ADaemonExecutor:
         # Setup mock task in terminal state (using lowercase as per SDK)
         mock_task = Mock()
         mock_task.status = TaskState.completed
-        
+
         executor.task_store = Mock()
         executor.task_store.get = AsyncMock(return_value=mock_task)
         executor.task_store.save = AsyncMock()
-        
+
         # Cancel should handle terminal state appropriately
         await executor.cancel("task-id")
-        
+
         # The actual implementation may or may not save based on state detection
         # Just verify no exception is raised
 
@@ -145,14 +144,14 @@ class TestA2ADaemonExecutor:
         mock_task = Mock()
         mock_task.status = TaskState.working
         mock_task.id = "test-task-id"
-        
+
         executor.task_store = Mock()
         executor.task_store.get = AsyncMock(return_value=mock_task)
         executor.task_store.save = AsyncMock()
-        
+
         # Cancel the task
         await executor.cancel("test-task-id")
-        
+
         # Should save the task with updated status
         executor.task_store.save.assert_called_once()
 
@@ -165,7 +164,7 @@ class TestA2ADaemonExecutor:
             ("canceled", TaskState.canceled),
             ("input_required", TaskState.input_required),
         ]
-        
+
         for input_name, expected in test_cases:
             try:
                 result = _task_state(input_name)
@@ -204,10 +203,10 @@ class TestExecutorIntegration:
         ))
         task_store.save = AsyncMock()
         executor.task_store = task_store
-        
+
         # Cancel the task
         await executor.cancel("test-task")
-        
+
         # Verify task was fetched and saved
         task_store.get.assert_called_once_with("test-task")
         task_store.save.assert_called_once()

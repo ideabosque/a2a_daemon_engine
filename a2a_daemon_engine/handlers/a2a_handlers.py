@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 A2A Protocol Handlers
 
@@ -28,7 +27,7 @@ Example Usage:
 import asyncio
 import json
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 import pendulum
@@ -44,8 +43,8 @@ DEFAULT_RETRY_DELAY_BASE = 1  # seconds
 
 
 async def handle_agent_handshake(
-    partition_key: str, agent_info: Dict[str, Any]
-) -> Dict[str, Any]:
+    partition_key: str, agent_info: dict[str, Any]
+) -> dict[str, Any]:
     """
     Handle agent handshake and capability negotiation.
 
@@ -114,8 +113,8 @@ async def handle_agent_handshake(
 
 
 async def handle_task_assignment(
-    partition_key: str, task: Dict[str, Any]
-) -> Dict[str, Any]:
+    partition_key: str, task: dict[str, Any]
+) -> dict[str, Any]:
     """
     Handle task assignment to agents.
 
@@ -158,6 +157,16 @@ async def handle_task_assignment(
         task_id = task.get("task_id") or str(uuid.uuid4())
         task["task_id"] = task_id
 
+        if not Config.a2a_core and Config.a2a_server and hasattr(Config.a2a_server, "assign_task"):
+            result = await Config.a2a_server.assign_task(
+                partition_key=partition_key, task=task
+            )
+            return {
+                "status": "success",
+                "message": "Task assigned successfully",
+                "data": result,
+            }
+
         # Determine assigned agent
         assigned_agent_id = task.get("assigned_agent_id")
         if not assigned_agent_id:
@@ -199,8 +208,8 @@ async def handle_task_assignment(
 
 
 async def handle_message_routing(
-    partition_key: str, message: Dict[str, Any]
-) -> Dict[str, Any]:
+    partition_key: str, message: dict[str, Any]
+) -> dict[str, Any]:
     """
     Handle message routing between agents.
 
@@ -255,6 +264,15 @@ async def handle_message_routing(
                 "message": "Message routed successfully",
                 "data": result,
             }
+        elif Config.a2a_server and hasattr(Config.a2a_server, "route_message"):
+            result = await Config.a2a_server.route_message(
+                partition_key=partition_key, message=message
+            )
+            return {
+                "status": "success",
+                "message": "Message routed successfully",
+                "data": result,
+            }
         else:
             raise ValueError("A2A core not initialized")
 
@@ -264,7 +282,7 @@ async def handle_message_routing(
         return {"status": "error", "message": str(e)}
 
 
-async def handle_state_sync(partition_key: str, params: Dict[str, Any]) -> Dict[str, Any]:
+async def handle_state_sync(partition_key: str, params: dict[str, Any]) -> dict[str, Any]:
     """
     Handle state synchronization for tasks and agents.
 
@@ -290,7 +308,7 @@ async def handle_state_sync(partition_key: str, params: Dict[str, Any]) -> Dict[
     try:
         # Build GraphQL query based on sync type
         sync_type = params.get("sync_type", "task")
-        
+
         if Config.a2a_core:
             if sync_type == "task" and params.get("task_id"):
                 result = await Config.a2a_core.get_a2a_task(
@@ -307,7 +325,7 @@ async def handle_state_sync(partition_key: str, params: Dict[str, Any]) -> Dict[
                 result = await Config.a2a_core.get_a2a_tasks(
                     partition_key=partition_key
                 )
-            
+
             return {
                 "status": "success",
                 "message": "State synced successfully",
@@ -323,8 +341,8 @@ async def handle_state_sync(partition_key: str, params: Dict[str, Any]) -> Dict[
 
 
 async def find_best_agent(
-    partition_key: str, task_type: str, required_capabilities: List[str]
-) -> Optional[Dict[str, Any]]:
+    partition_key: str, task_type: str, required_capabilities: list[str]
+) -> dict[str, Any] | None:
     """
     Find the best agent for a task based on capabilities and availability.
 
@@ -378,7 +396,7 @@ async def find_best_agent(
         return None
 
 
-async def get_agent(partition_key: str, agent_id: str) -> Optional[Dict[str, Any]]:
+async def get_agent(partition_key: str, agent_id: str) -> dict[str, Any] | None:
     """
     Get agent details by ID.
 
@@ -404,8 +422,8 @@ async def get_agent(partition_key: str, agent_id: str) -> Optional[Dict[str, Any
 async def deliver_message_to_agent(
     partition_key: str,
     message_id: str,
-    recipient_agent: Dict[str, Any],
-    payload: Dict[str, Any],
+    recipient_agent: dict[str, Any],
+    payload: dict[str, Any],
     max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> bool:
     """
@@ -463,7 +481,7 @@ async def deliver_message_to_agent(
                             f"Message {message_id} delivered successfully to "
                             f"{recipient_agent.get('agentId')}"
                         )
-                    
+
                     # Update status in DynamoDB
                     if Config.a2a_core:
                         await Config.a2a_core.update_a2a_message(
@@ -500,7 +518,7 @@ async def deliver_message_to_agent(
     # Max retries exceeded
     if Config.logger:
         Config.logger.error(f"Failed to deliver message {message_id} after {max_retries} attempts")
-    
+
     # Update status to FAILED
     if Config.a2a_core:
         await Config.a2a_core.update_a2a_message(
@@ -509,7 +527,7 @@ async def deliver_message_to_agent(
             status="FAILED",
             delivery_attempts=max_retries,
         )
-    
+
     return False
 
 
@@ -518,7 +536,7 @@ async def update_message_status(
     message_id: str,
     status: str,
     delivery_attempts: int = 0,
-    error_message: Optional[str] = None,
+    error_message: str | None = None,
 ) -> bool:
     """
     Update message delivery status.

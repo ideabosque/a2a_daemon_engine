@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 A2A Push Notification Configuration Manager
 
@@ -16,16 +15,16 @@ Includes SSRF protection via URL allowlist/denylist validation.
 
 Usage:
     from a2a_daemon_engine.handlers.a2a_pushconfig import PushNotificationManager
-    
+
     manager = PushNotificationManager(task_store, logger)
-    
+
     # Create push config
     config = await manager.create_push_config(
         task_id="task-123",
         webhook_url="https://example.com/webhook",
         partition_key="endpoint#part"
     )
-    
+
     # Validate webhook URL against allowlist
     is_valid = manager.validate_webhook_url("https://example.com/webhook")
 """
@@ -33,7 +32,7 @@ Usage:
 import ipaddress
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 from urllib.parse import urlparse
 
 import pendulum
@@ -52,24 +51,24 @@ class WebhookValidationError(Exception):
 class PushNotificationConfig:
     """
     Represents an A2A PushNotificationConfig.
-    
+
     Based on A2A v1.0 specification for push notification configuration.
     """
-    
+
     def __init__(
         self,
         task_id: str,
         webhook_url: str,
         partition_key: str,
-        config_id: Optional[str] = None,
-        headers: Optional[Dict[str, str]] = None,
-        scopes: Optional[List[str]] = None,
-        created_at: Optional[str] = None,
-        updated_at: Optional[str] = None,
+        config_id: str | None = None,
+        headers: dict[str, str] | None = None,
+        scopes: list[str] | None = None,
+        created_at: str | None = None,
+        updated_at: str | None = None,
     ):
         """
         Initialize push notification config.
-        
+
         Args:
             task_id: Associated task identifier
             webhook_url: URL to send push notifications
@@ -88,8 +87,8 @@ class PushNotificationConfig:
         self.scopes = scopes or ["task_status", "task_artifact"]
         self.created_at = created_at or pendulum.now("UTC").to_iso8601_string()
         self.updated_at = updated_at or self.created_at
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert config to dictionary."""
         return {
             "config_id": self.config_id,
@@ -101,9 +100,9 @@ class PushNotificationConfig:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "PushNotificationConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "PushNotificationConfig":
         """Create config from dictionary."""
         return cls(
             task_id=data["task_id"],
@@ -120,13 +119,13 @@ class PushNotificationConfig:
 class WebhookUrlValidator:
     """
     SSRF protection via URL allowlist/denylist validation.
-    
+
     Phase 7 Task 7: Validates webhook URLs against security policies
     to prevent Server-Side Request Forgery attacks.
     """
-    
+
     # Default denylisted private/reserved CIDRs
-    PRIVATE_CIDRS: List[str] = [
+    PRIVATE_CIDRS: list[str] = [
         "127.0.0.0/8",      # Loopback
         "10.0.0.0/8",       # Private Class A
         "172.16.0.0/12",    # Private Class B
@@ -139,9 +138,9 @@ class WebhookUrlValidator:
         "fe80::/10",        # IPv6 link-local
         "fc00::/7",         # IPv6 unique local
     ]
-    
+
     # Default denylisted hostname patterns
-    DENYLISTED_HOSTS: List[str] = [
+    DENYLISTED_HOSTS: list[str] = [
         "localhost",
         "*.localhost",
         "*.local",
@@ -149,23 +148,23 @@ class WebhookUrlValidator:
         "169.254.169.254",  # AWS metadata service
         "metadata.google.internal",
     ]
-    
+
     # Allowed URL schemes
-    ALLOWED_SCHEMES: Set[str] = {"https", "http"}
-    
+    ALLOWED_SCHEMES: set[str] = {"https", "http"}
+
     # URL with port pattern
     HOST_PORT_PATTERN = re.compile(r"^([a-zA-Z0-9\-\.]+|\[[0-9a-fA-F:\.]+\])(?::(\d+))?$")
-    
+
     def __init__(
         self,
-        allowlist: Optional[List[str]] = None,
-        denylist: Optional[List[str]] = None,
+        allowlist: list[str] | None = None,
+        denylist: list[str] | None = None,
         require_https: bool = True,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
     ):
         """
         Initialize webhook validator.
-        
+
         Args:
             allowlist: List of allowed hostname patterns (e.g., ["*.example.com", "api.example.org"])
             denylist: List of blocked hostname patterns (overrides defaults if provided)
@@ -176,19 +175,19 @@ class WebhookUrlValidator:
         self.denylist = denylist or self.DENYLISTED_HOSTS.copy()
         self.require_https = require_https
         self.logger = logger or logging.getLogger(__name__)
-        
+
         # Compile denylisted CIDRs
         self._denylisted_networks = [
             ipaddress.ip_network(cidr) for cidr in self.PRIVATE_CIDRS
         ]
-    
-    def validate(self, url: str) -> Tuple[bool, Optional[str]]:
+
+    def validate(self, url: str) -> tuple[bool, str | None]:
         """
         Validate webhook URL against security policies.
-        
+
         Args:
             url: Webhook URL to validate
-            
+
         Returns:
             Tuple of (is_valid, error_message)
             - is_valid: True if URL passes all checks
@@ -196,24 +195,24 @@ class WebhookUrlValidator:
         """
         try:
             parsed = urlparse(url)
-            
+
             # Check scheme
             if parsed.scheme not in self.ALLOWED_SCHEMES:
                 return False, f"Invalid URL scheme '{parsed.scheme}'. Allowed: {self.ALLOWED_SCHEMES}"
-            
+
             if self.require_https and parsed.scheme != "https":
                 return False, "HTTPS required for webhook URLs. Configure require_https=False to allow HTTP."
-            
+
             hostname = parsed.hostname
 
             if not hostname:
                 return False, "URL must contain a valid hostname"
-            
+
             # Check for denylisted hosts
             for pattern in self.denylist:
                 if self._match_pattern(hostname, pattern):
                     return False, f"Hostname '{hostname}' matches denylist pattern '{pattern}'"
-            
+
             # Check for private IP addresses
             try:
                 ip = ipaddress.ip_address(hostname)
@@ -223,7 +222,7 @@ class WebhookUrlValidator:
             except ValueError:
                 # Not an IP address, continue with hostname checks
                 pass
-            
+
             # Check allowlist if configured
             if self.allowlist:
                 allowed = False
@@ -233,26 +232,26 @@ class WebhookUrlValidator:
                         break
                 if not allowed:
                     return False, f"Hostname '{hostname}' not in allowlist"
-            
+
             # Check for common SSRF bypasses
             if self._contains_ssrf_bypass(url):
                 return False, "URL contains potential SSRF bypass patterns"
-            
+
             self.logger.debug(f"Webhook URL validated: {url}")
             return True, None
-            
+
         except Exception as e:
             self.logger.error(f"URL validation error: {e}")
             return False, f"URL parsing error: {str(e)}"
-    
+
     def _match_pattern(self, hostname: str, pattern: str) -> bool:
         """
         Check if hostname matches pattern (supports wildcards).
-        
+
         Args:
             hostname: Hostname to check
             pattern: Pattern to match (e.g., "*.example.com" or "api.example.org")
-            
+
         Returns:
             True if hostname matches pattern
         """
@@ -262,14 +261,14 @@ class WebhookUrlValidator:
             return hostname == domain or hostname.endswith("." + domain)
         else:
             return hostname == pattern or hostname.endswith("." + pattern)
-    
+
     def _contains_ssrf_bypass(self, url: str) -> bool:
         """
         Check for common SSRF bypass techniques.
-        
+
         Args:
             url: URL to check
-            
+
         Returns:
             True if URL contains potential bypass patterns
         """
@@ -282,11 +281,11 @@ class WebhookUrlValidator:
             "@",             # Credential injection (e.g., http://evil.com@good.com)
             "#",             # Fragment injection
         ]
-        
+
         for pattern in bypass_patterns:
             if pattern in url.lower():
                 return True
-        
+
         # Check for decimal/octal/hex encoded IPs
         # These are common SSRF bypasses for IP-based restrictions
         parts = url.split("://")[-1].split("/")[0].split(":")[0]
@@ -296,27 +295,27 @@ class WebhookUrlValidator:
             return True
         except ValueError:
             pass
-        
+
         return False
 
 
 class PushNotificationManager:
     """
     Manages PushNotificationConfig CRUD operations.
-    
+
     Provides A2A-standard push notification configuration with SSRF protection.
     """
-    
+
     def __init__(
         self,
         task_store: Any,
-        logger: Optional[logging.Logger] = None,
-        webhook_allowlist: Optional[List[str]] = None,
+        logger: logging.Logger | None = None,
+        webhook_allowlist: list[str] | None = None,
         require_https: bool = True,
     ):
         """
         Initialize push notification manager.
-        
+
         Args:
             task_store: TaskStore instance for persistence
             logger: Optional logger instance
@@ -330,32 +329,32 @@ class PushNotificationManager:
             require_https=require_https,
             logger=self.logger,
         )
-        
+
         # In-memory cache for push configs (task_id -> PushNotificationConfig)
         # Production should use Redis or similar
-        self._config_cache: Dict[str, PushNotificationConfig] = {}
-    
+        self._config_cache: dict[str, PushNotificationConfig] = {}
+
     async def create_push_config(
         self,
         task_id: str,
         webhook_url: str,
         partition_key: str,
-        headers: Optional[Dict[str, str]] = None,
-        scopes: Optional[List[str]] = None,
+        headers: dict[str, str] | None = None,
+        scopes: list[str] | None = None,
     ) -> PushNotificationConfig:
         """
         CreateTaskPushNotificationConfig: Register webhook for task updates.
-        
+
         Args:
             task_id: Task to receive notifications for
             webhook_url: URL to send push notifications
             partition_key: Composite partition key for multi-tenancy
             headers: Optional custom headers for webhook requests
             scopes: Optional notification scopes (default: task_status, task_artifact)
-            
+
         Returns:
             PushNotificationConfig instance
-            
+
         Raises:
             WebhookValidationError: If webhook URL fails security validation
             ValueError: If task does not exist
@@ -364,12 +363,12 @@ class PushNotificationManager:
         is_valid, error_msg = self.webhook_validator.validate(webhook_url)
         if not is_valid:
             raise WebhookValidationError(f"Invalid webhook URL: {error_msg}")
-        
+
         # Verify task exists
         task = await self.task_store.get(task_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")
-        
+
         # Create config
         config = PushNotificationConfig(
             task_id=task_id,
@@ -378,62 +377,62 @@ class PushNotificationManager:
             headers=headers,
             scopes=scopes or ["task_status", "task_artifact"],
         )
-        
+
         # Persist to DynamoDB (via GraphQL)
         await self._persist_config(config)
-        
+
         # Cache for quick access
         self._config_cache[config.config_id] = config
-        
+
         self.logger.info(f"Push config created: {config.config_id} for task {task_id}")
         return config
-    
+
     async def get_push_config(
         self,
         config_id: str,
-    ) -> Optional[PushNotificationConfig]:
+    ) -> PushNotificationConfig | None:
         """
         GetTaskPushNotificationConfig: Retrieve push notification configuration.
-        
+
         Args:
             config_id: Push notification config identifier
-            
+
         Returns:
             PushNotificationConfig if found, None otherwise
         """
         # Check cache first
         if config_id in self._config_cache:
             return self._config_cache[config_id]
-        
+
         # Load from persistence
         config = await self._load_config(config_id)
         if config:
             self._config_cache[config_id] = config
-        
+
         return config
-    
+
     async def list_push_configs(
         self,
-        task_id: Optional[str] = None,
-        partition_key: Optional[str] = None,
+        task_id: str | None = None,
+        partition_key: str | None = None,
         limit: int = 100,
-        cursor: Optional[str] = None,
-    ) -> Tuple[List[PushNotificationConfig], Optional[str]]:
+        cursor: str | None = None,
+    ) -> tuple[list[PushNotificationConfig], str | None]:
         """
         ListTaskPushNotificationConfigs: List push notification configurations.
-        
+
         Args:
             task_id: Filter by task ID (optional)
             partition_key: Filter by partition key (optional)
             limit: Maximum results to return
             cursor: Pagination cursor from previous query
-            
+
         Returns:
             Tuple of (list of configs, next_cursor or None)
         """
         configs = []
         next_cursor = None
-        
+
         try:
             # Query from DynamoDB via GraphQL
             query = """
@@ -463,7 +462,7 @@ class PushNotificationManager:
                     }
                 }
             """
-            
+
             variables = {
                 "limit": limit,
                 "cursor": cursor,
@@ -472,18 +471,18 @@ class PushNotificationManager:
                 variables["partitionKey"] = partition_key
             if task_id:
                 variables["taskId"] = task_id
-            
+
             if Config.a2a_core:
                 result = Config.a2a_core.a2a_core_graphql(
                     partition_key=partition_key or "default#default",
                     query=query,
                     variables=variables,
                 )
-                
+
                 data = result.get("data", {}).get("a2aPushConfigList", {})
                 items = data.get("a2aPushConfigList", [])
                 next_cursor = data.get("nextCursor")
-                
+
                 for item in items:
                     config = PushNotificationConfig(
                         task_id=item["taskId"],
@@ -497,22 +496,22 @@ class PushNotificationManager:
                     )
                     configs.append(config)
                     self._config_cache[config.config_id] = config
-        
+
         except Exception as e:
             self.logger.error(f"Failed to list push configs: {e}")
-        
+
         return configs, next_cursor
-    
+
     async def delete_push_config(
         self,
         config_id: str,
     ) -> bool:
         """
         DeleteTaskPushNotificationConfig: Remove push notification configuration.
-        
+
         Args:
             config_id: Push notification config identifier
-            
+
         Returns:
             True if deleted successfully, False otherwise
         """
@@ -520,7 +519,7 @@ class PushNotificationManager:
             # Remove from cache
             if config_id in self._config_cache:
                 del self._config_cache[config_id]
-            
+
             # Delete from DynamoDB
             mutation = """
                 mutation DeletePushConfig($configId: String!) {
@@ -529,55 +528,55 @@ class PushNotificationManager:
                     }
                 }
             """
-            
+
             if Config.a2a_core:
                 Config.a2a_core.a2a_core_graphql(
                     partition_key="default#default",
                     query=mutation,
                     variables={"configId": config_id},
                 )
-            
+
             self.logger.info(f"Push config deleted: {config_id}")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Failed to delete push config {config_id}: {e}")
             return False
-    
+
     async def send_push_notification(
         self,
         config_id: str,
         event_type: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
     ) -> bool:
         """
         Send push notification to configured webhook.
-        
+
         Args:
             config_id: Push notification config identifier
             event_type: Type of event (task_status, task_artifact, etc.)
             payload: Event payload
-            
+
         Returns:
             True if notification sent successfully, False otherwise
         """
         import httpx
-        
+
         config = await self.get_push_config(config_id)
         if not config:
             self.logger.warning(f"Push config not found: {config_id}")
             return False
-        
+
         # Check if event type is in scopes
         if event_type not in config.scopes:
             return True  # Silently skip non-subscribed events
-        
+
         # Re-validate URL before sending (security)
         is_valid, error_msg = self.webhook_validator.validate(config.webhook_url)
         if not is_valid:
             self.logger.error(f"Webhook URL no longer valid: {error_msg}")
             return False
-        
+
         # Prepare notification payload
         notification = {
             "config_id": config_id,
@@ -586,14 +585,14 @@ class PushNotificationManager:
             "timestamp": pendulum.now("UTC").to_iso8601_string(),
             "payload": payload,
         }
-        
+
         # Prepare headers
         headers = {
             "Content-Type": "application/json",
             "X-A2A-Push-Event": event_type,
         }
         headers.update(config.headers)
-        
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
@@ -601,7 +600,7 @@ class PushNotificationManager:
                     json=notification,
                     headers=headers,
                 )
-                
+
                 if response.status_code < 300:
                     self.logger.debug(f"Push notification sent to {config.webhook_url}")
                     return True
@@ -610,15 +609,15 @@ class PushNotificationManager:
                         f"Push notification failed: {response.status_code} - {response.text}"
                     )
                     return False
-                    
+
         except Exception as e:
             self.logger.error(f"Push notification error: {e}")
             return False
-    
+
     async def _persist_config(self, config: PushNotificationConfig) -> None:
         """Persist config to DynamoDB via GraphQL."""
         from silvaengine_utility.serializer import Serializer
-        
+
         mutation = """
             mutation CreatePushConfig(
                 $configId: String!,
@@ -646,7 +645,7 @@ class PushNotificationManager:
                 }
             }
         """
-        
+
         variables = {
             "configId": config.config_id,
             "taskId": config.task_id,
@@ -657,18 +656,18 @@ class PushNotificationManager:
             "createdAt": config.created_at,
             "updatedAt": config.updated_at,
         }
-        
+
         if Config.a2a_core:
             Config.a2a_core.a2a_core_graphql(
                 partition_key=config.partition_key,
                 query=mutation,
                 variables=variables,
             )
-    
-    async def _load_config(self, config_id: str) -> Optional[PushNotificationConfig]:
+
+    async def _load_config(self, config_id: str) -> PushNotificationConfig | None:
         """Load config from DynamoDB via GraphQL."""
         from silvaengine_utility.serializer import Serializer
-        
+
         query = """
             query GetPushConfig($configId: String!) {
                 a2aPushConfig(configId: $configId) {
@@ -683,7 +682,7 @@ class PushNotificationManager:
                 }
             }
         """
-        
+
         try:
             if Config.a2a_core:
                 result = Config.a2a_core.a2a_core_graphql(
@@ -691,7 +690,7 @@ class PushNotificationManager:
                     query=query,
                     variables={"configId": config_id},
                 )
-                
+
                 data = result.get("data", {}).get("a2aPushConfig", {})
                 if data:
                     return PushNotificationConfig(
@@ -706,39 +705,39 @@ class PushNotificationManager:
                     )
         except Exception as e:
             self.logger.error(f"Failed to load push config {config_id}: {e}")
-        
+
         return None
-    
-    def validate_webhook_url(self, url: str) -> Tuple[bool, Optional[str]]:
+
+    def validate_webhook_url(self, url: str) -> tuple[bool, str | None]:
         """
         Public method to validate webhook URL.
-        
+
         Args:
             url: URL to validate
-            
+
         Returns:
             Tuple of (is_valid, error_message)
         """
         return self.webhook_validator.validate(url)
 
 
-def get_webhook_allowlist_from_env() -> List[str]:
+def get_webhook_allowlist_from_env() -> list[str]:
     """
     Load webhook allowlist from environment variable.
-    
+
     Environment: A2A_PUSH_WEBHOOK_ALLOWLIST
     Format: Comma-separated list of hostname patterns
     Example: *.example.com,api.example.org,webhook.mycompany.io
-    
+
     Returns:
         List of allowed hostname patterns
     """
     import os
-    
+
     allowlist_str = os.environ.get("A2A_PUSH_WEBHOOK_ALLOWLIST", "")
     if not allowlist_str:
         return []
-    
+
     return [pattern.strip() for pattern in allowlist_str.split(",") if pattern.strip()]
 
 

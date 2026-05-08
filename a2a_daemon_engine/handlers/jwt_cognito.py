@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 AWS Cognito JWT Verification for A2A Daemon Engine
 
@@ -7,7 +6,7 @@ Handles verification of AWS Cognito JWT tokens using JWKS (JSON Web Key Set).
 """
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 import jwt
@@ -19,10 +18,10 @@ from .config import Config
 __author__ = "SilvaEngine Team"
 
 # Global HTTP client for async requests
-_http_client: Optional[httpx.AsyncClient] = None
+_http_client: httpx.AsyncClient | None = None
 
 # JWKS client cache
-_jwks_client: Optional[PyJWKClient] = None
+_jwks_client: PyJWKClient | None = None
 _jwks_client_last_refresh: float = 0
 
 
@@ -62,7 +61,7 @@ def _get_jwks_client() -> PyJWKClient:
     return _jwks_client
 
 
-async def verify_cognito_jwt(token: str) -> Dict[str, Any]:
+async def verify_cognito_jwt(token: str) -> dict[str, Any]:
     """
     Verify and decode an AWS Cognito JWT token.
 

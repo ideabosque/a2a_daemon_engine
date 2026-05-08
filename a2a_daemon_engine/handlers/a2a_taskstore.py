@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 DynamoDB-backed A2A Task Store
 
@@ -19,12 +18,11 @@ Interface Contract:
 
 import logging
 from collections import OrderedDict, deque
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any
 
 import pendulum
-
-from a2a.server.tasks import TaskStore
 from a2a.server.context import ServerCallContext
+from a2a.server.tasks import TaskStore
 
 # Import Task type and related types from A2A SDK
 from a2a.types import Task, TaskState, TaskStatus
@@ -83,7 +81,7 @@ class DynamoDBA2ATaskStore(TaskStore):
     def __init__(
         self,
         partition_key: str,
-        logger: Optional[logging.Logger] = None,
+        logger: logging.Logger | None = None,
         max_tasks_cached: int = _DEFAULT_MAX_TASKS_CACHED,
         max_events_per_task: int = _DEFAULT_MAX_EVENTS_PER_TASK,
     ):
@@ -103,13 +101,13 @@ class DynamoDBA2ATaskStore(TaskStore):
 
         # Bounded in-memory event cache: LRU over tasks, ring buffer per task.
         # For production-grade event streaming, externalize to Redis Streams or similar.
-        self._event_cache: "OrderedDict[str, Deque[Dict[str, Any]]]" = OrderedDict()
+        self._event_cache: OrderedDict[str, deque[dict[str, Any]]] = OrderedDict()
 
         self.logger.info(
             f"DynamoDB task store initialized for partition: {partition_key}"
         )
 
-    def _touch_task_cache(self, task_id: str) -> Deque[Dict[str, Any]]:
+    def _touch_task_cache(self, task_id: str) -> deque[dict[str, Any]]:
         """Return (and LRU-promote) the bounded event buffer for a task."""
         buffer = self._event_cache.get(task_id)
         if buffer is None:
@@ -127,8 +125,8 @@ class DynamoDBA2ATaskStore(TaskStore):
     # =============================================================================
 
     async def get(
-        self, task_id: str, context: Optional[ServerCallContext] = None
-    ) -> Optional[Task]:
+        self, task_id: str, context: ServerCallContext | None = None
+    ) -> Task | None:
         """
         Retrieve a task from DynamoDB - canonical A2A SDK interface.
 
@@ -160,7 +158,7 @@ class DynamoDBA2ATaskStore(TaskStore):
             return None
 
     async def save(
-        self, task: Task, context: Optional[ServerCallContext] = None
+        self, task: Task, context: ServerCallContext | None = None
     ) -> None:
         """
         Save or update a task in DynamoDB - canonical A2A SDK interface.
@@ -172,7 +170,7 @@ class DynamoDBA2ATaskStore(TaskStore):
             task: Task object to save
             context: Optional server call context (for future extensibility)
         """
-        from .a2a_utility import insert_a2a_task, update_a2a_task, get_a2a_task
+        from .a2a_utility import get_a2a_task, insert_a2a_task, update_a2a_task
 
         task_id = task.id if hasattr(task, "id") else str(task)
 
@@ -208,7 +206,7 @@ class DynamoDBA2ATaskStore(TaskStore):
             raise
 
     async def delete(
-        self, task_id: str, context: Optional[ServerCallContext] = None
+        self, task_id: str, context: ServerCallContext | None = None
     ) -> None:
         """
         Delete a task from DynamoDB - canonical A2A SDK interface.
@@ -264,7 +262,7 @@ class DynamoDBA2ATaskStore(TaskStore):
 
         return status_map.get(status_str.upper(), _task_state("UNKNOWN"))
 
-    def _dict_to_task(self, task_dict: Dict[str, Any]) -> Task:
+    def _dict_to_task(self, task_dict: dict[str, Any]) -> Task:
         """
         Convert DynamoDB dict to A2A SDK Task object.
 
@@ -277,7 +275,7 @@ class DynamoDBA2ATaskStore(TaskStore):
             Task object
         """
         # If Task is actually a Dict (fallback), just return the dict
-        if Task == Dict[str, Any]:
+        if Task == dict[str, Any]:
             return task_dict
 
         # Map DynamoDB status string to TaskState enum
@@ -314,7 +312,7 @@ class DynamoDBA2ATaskStore(TaskStore):
             self.logger.warning(f"Failed to create Task object, using dict: {e}")
             return task_dict
 
-    def _task_to_dict(self, task: Task) -> Dict[str, Any]:
+    def _task_to_dict(self, task: Task) -> dict[str, Any]:
         """
         Convert A2A SDK Task object to DynamoDB dict.
 
@@ -401,12 +399,12 @@ class DynamoDBA2ATaskStore(TaskStore):
 
     async def list_tasks(
         self,
-        task_ids: Optional[List[str]] = None,
-        session_id: Optional[str] = None,
-        context_id: Optional[str] = None,
+        task_ids: list[str] | None = None,
+        session_id: str | None = None,
+        context_id: str | None = None,
         page_size: int = 20,
-        page_token: Optional[str] = None,
-    ) -> tuple[List[Dict[str, Any]], Optional[str]]:
+        page_token: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
         """
         List tasks from DynamoDB with cursor pagination (A2A v1.0 compliant).
 
@@ -423,9 +421,10 @@ class DynamoDBA2ATaskStore(TaskStore):
         Returns:
             Tuple of (list of task data dictionaries, next_page_token)
         """
-        from .a2a_utility import query_a2a_task
         import base64
         import json
+
+        from .a2a_utility import query_a2a_task
 
         try:
             # Decode page_token to get the next list offset.
@@ -470,7 +469,7 @@ class DynamoDBA2ATaskStore(TaskStore):
             self.logger.error(f"Failed to list tasks: {e}")
             return [], None
 
-    async def add_event(self, task_id: str, event: Dict[str, Any]) -> None:
+    async def add_event(self, task_id: str, event: dict[str, Any]) -> None:
         """
         Add an event to task's event stream.
 
@@ -508,7 +507,7 @@ class DynamoDBA2ATaskStore(TaskStore):
         except Exception as e:
             self.logger.warning(f"Failed to persist event for task {task_id}: {e}")
 
-    async def get_events(self, task_id: str) -> List[Dict[str, Any]]:
+    async def get_events(self, task_id: str) -> list[dict[str, Any]]:
         """
         Get all events for a task.
 

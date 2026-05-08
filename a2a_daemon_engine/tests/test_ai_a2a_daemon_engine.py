@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 A2A Daemon Engine Tests
 
@@ -20,6 +19,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+pytestmark = pytest.mark.skipif(
+    os.getenv("A2A_RUN_DYNAMODB_TESTS", "").lower() not in {"1", "true", "yes"},
+    reason="DynamoDB lifecycle tests require AWS/local DynamoDB; set A2A_RUN_DYNAMODB_TESTS=1",
+)
+
 # Add parent directory to path to allow imports when running directly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
@@ -38,14 +42,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
-from silvaengine_utility import Graphql
+from silvaengine_utility import Graphql  # noqa: E402
 
 # Import test helpers
-from .test_helpers import call_method, log_test_result
+from .test_helpers import call_method, log_test_result  # noqa: E402
 
 # Load test data from JSON file
 _test_data_file = os.path.join(os.path.dirname(__file__), "test_data.json")
-with open(_test_data_file, "r") as f:
+with open(_test_data_file) as f:
     _TEST_DATA = json.load(f)
 
 # Extract test data sets for parametrization

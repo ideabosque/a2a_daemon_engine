@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 A2A JSON-RPC 2.0 Protocol Handler
 
@@ -21,7 +20,13 @@ Migration Path:
 
 from __future__ import annotations
 
+import logging
 import warnings
+from typing import Any
+
+from .config import Config
+
+__author__ = "bibow"
 
 warnings.warn(
     "a2a_jsonrpc.py is deprecated; use SDK DefaultRequestHandler instead",
@@ -29,17 +34,10 @@ warnings.warn(
     stacklevel=2,
 )
 
-__author__ = "bibow"
-
-import logging
-from typing import Any, Dict, Optional
-
-from .config import Config
-
 
 async def process_a2a_jsonrpc_message(
-    partition_key: Optional[str], message: Dict[str, Any]
-) -> Dict[str, Any]:
+    partition_key: str | None, message: dict[str, Any]
+) -> dict[str, Any]:
     """
     Process incoming A2A JSON-RPC 2.0 messages.
 
@@ -163,7 +161,6 @@ async def process_a2a_jsonrpc_message(
         elif method == "agent.executeSkill":
             # Execute skill (placeholder - implement based on A2A SDK)
             skill_name = params.get("skillName")
-            skill_input = params.get("input", {})
 
             # TODO: Implement skill execution
             # This would delegate to Config.a2a_server skill handlers
@@ -214,8 +211,8 @@ async def process_a2a_jsonrpc_message(
 
 
 def process_a2a_jsonrpc_message_sync(
-    partition_key: Optional[str], message: Dict[str, Any]
-) -> Dict[str, Any]:
+    partition_key: str | None, message: dict[str, Any]
+) -> dict[str, Any]:
     """
     DEPRECATED: Synchronous wrapper for process_a2a_jsonrpc_message.
 

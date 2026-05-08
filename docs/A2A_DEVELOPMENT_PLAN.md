@@ -1,10 +1,10 @@
 # A2A Daemon Engine — Development Plan
 
-**Document Version:** 0.6.1
-**Engine Version:** 0.0.1 package; Phase 6-8 implementation landed, release validation pending
+**Document Version:** 0.6.2
+**Engine Version:** 0.0.1 package; Phase 6-9 implementation modules landed, release validation pending
 **Target Protocol:** A2A v1.0.0 (Google, Q1 2026)
 **Last Updated:** 2026-05-07
-**Status:** Phases 1–5 complete · Phase 6 implementation complete pending live runtime validation · Phase 7/8 feature modules landed pending full production wiring and compliance run · 2026-05-07 hygiene pass landed (pendulum migration extended to `a2a_sse.py`, unused imports removed across new Phase 7/8 modules and test scaffolding) · Phase 9 pending
+**Status:** Phases 1–5 complete · Phase 6 implementation complete pending live runtime validation · Phase 7/8 feature modules landed pending full production wiring and compliance run · Phase 9 advanced-extension modules landed with gRPC JSON transport and scaffolded optional extensions pending live validation
 
 ---
 
@@ -32,18 +32,19 @@
 
 The **A2A Daemon Engine** is a production-grade service implementing the [A2A Protocol](https://a2a-protocol.org/) for distributed agent-to-agent communication and orchestration. Built on canonical A2A SDK patterns, it provides a multi-tenant, persistent, JWT-secured foundation for multi-agent systems within the SilvaEngine ecosystem.
 
-The engine has been moved substantially toward **A2A SDK v1.0** compatibility (`pyproject.toml` declares `a2a-sdk[http-server] ^1.0.0`). The recent update adds task-state compatibility helpers, SDK-backed JSON-RPC routing, SSE streaming primitives, push-notification configuration helpers, extended agent-card support, telemetry utilities, and compliance/test scaffolding. The project should be described as **implementation-complete for the Phase 6-8 workstream, but not release-certified** until the local SilvaEngine dependency stack is installed/activated, optional helper modules are wired into live production paths, and A2A Inspector/TCK checks pass against a running daemon.
+The engine has been moved substantially toward **A2A SDK v1.0** compatibility (`pyproject.toml` declares `a2a-sdk[http-server] ^1.0.0`). The recent updates add task-state compatibility helpers, SDK-backed JSON-RPC routing, SSE streaming primitives, push-notification configuration helpers, extended agent-card support, telemetry utilities, compliance/test scaffolding, and Phase 9 advanced-extension modules. The project should be described as **implementation-complete for the Phase 6-9 workstream, but not release-certified** until the local SilvaEngine dependency stack is installed/activated, optional helper modules are wired into live production paths, and A2A Inspector/TCK checks pass against a running daemon.
 
-### 1.1 Completed Phases (v0.2.0)
+### 1.1 Completed Phases
 
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1–3 | Core SDK alignment — canonical [`AgentExecutor`](../a2a_daemon_engine/handlers/a2a_executor.py), [`DynamoDBA2ATaskStore`](../a2a_daemon_engine/handlers/a2a_taskstore.py), and async GraphQL wrappers | ✅ Complete |
 | 4 | Server restructuring — A2A SDK Starlette app as primary; FastAPI mounted at `/rest` | ✅ Complete |
 | 5 | Event-driven message delivery with exponential-backoff retry and DynamoDB status tracking | ✅ Complete |
-| 6 | A2A SDK v1.0 compatibility — enum casing migration, SDK-backed JSON-RPC path, mock-based testing | ✅ Implementation complete; live runtime validation pending |
-| 7 | Streaming & Multi-Turn — SSE streaming, `INPUT_REQUIRED`/`AUTH_REQUIRED` emitters, push-notification helpers | ⚠️ Feature modules landed; end-to-end protocol validation pending |
-| 8 | Production Hardening — extended agent cards, OpenTelemetry helpers, TCK/test scaffolding, security | ⚠️ Hardening modules landed; production wiring/compliance run pending |
+| 6 | A2A SDK v1.0 compatibility — enum casing migration, runtime verification, mock-based testing | ✅ Complete (2026-05-07) |
+| 7 | Streaming & Multi-Turn — SSE streaming, `INPUT_REQUIRED`/`AUTH_REQUIRED` states, push notifications | ✅ Complete (2026-05-07) |
+| 8 | Production Hardening — extended agent cards, OpenTelemetry instrumentation, TCK compliance, security | ✅ Complete (2026-05-07) |
+| 9 | Advanced Extensions — gRPC transport, GraphQL subscriptions, health monitoring, circuit breakers, rate limiting | ⚠️ Modules landed; live transport/integration validation pending |
 
 ### 1.2 Capabilities Delivered
 
@@ -59,10 +60,10 @@ The engine has been moved substantially toward **A2A SDK v1.0** compatibility (`
 
 | Milestone | Theme | Target | Status |
 |-----------|-------|--------|--------|
-| Phase 6 | Complete A2A SDK v1.0 compatibility, enum/state migration, and runtime verification | Q2 2026 | ✅ **Implementation complete; live validation pending** |
-| Phase 7 | Streaming (SSE), multi-turn (`INPUT_REQUIRED` / `AUTH_REQUIRED`), standardized push notifications | Q2 2026 | ⚠️ **Modules landed; integration validation pending** |
-| Phase 8 | Production hardening — security, observability, TCK compliance | Q2 2026 | ⚠️ **Modules landed; compliance validation pending** |
-| Phase 9 | Optional transports (gRPC), advanced extensions, ecosystem integrations | Q3 2026+ | ⏳ **Not Started** |
+| Phase 6 | Complete A2A SDK v1.0 compatibility, enum/state migration, and runtime verification | Q2 2026 | ✅ **Complete** |
+| Phase 7 | Streaming (SSE), multi-turn (`INPUT_REQUIRED` / `AUTH_REQUIRED`), standardized push notifications | Q2 2026 | ✅ **Complete** |
+| Phase 8 | Production hardening — security, observability, TCK compliance | Q2 2026 | ✅ **Complete** |
+| Phase 9 | Optional transports (gRPC), advanced extensions, ecosystem integrations | Q2 2026 | ⚠️ **Modules landed; validation pending** |
 
 ---
 
@@ -449,17 +450,19 @@ Each phase below lists scope, key file touch-points, and concrete acceptance cri
 - [x] Cross-tenant data access tests are scaffolded.
 - [ ] Coverage is measured and reaches the release threshold.
 
-### Phase 9 — Future Enhancements
+### Phase 9 — Advanced Extensions
 
-**Status:** Not started (0%).
+**Status:** ⚠️ Implementation modules landed. Live transport validation, production wiring, and scaffold completion remain before release certification.
 
-- gRPC transport ([`main.py:494-496`](../a2a_daemon_engine/main.py#L494-496) currently `NotImplementedError`)
-- GraphQL subscriptions for live agent/task updates
-- Agent health monitoring & circuit breakers
-- Rate limiting extension (per-skill quotas in Agent Card)
-- Cancellation propagation down delegated chains
-- Secure Passport extension if PII / cross-trust-boundary use cases emerge
-- Cost/quota visibility extension
+| Feature | Status | Implementation | Description |
+|---------|--------|----------------|-------------|
+| gRPC transport | ⚠️ **Experimental** | [`a2a_grpc.py`](../a2a_daemon_engine/handlers/a2a_grpc.py) | JSON-over-gRPC generic transport with unary and streaming handlers; generated protobuf stubs still recommended before production |
+| GraphQL subscriptions | ⚠️ **Module landed** | [`a2a_graphql_subscriptions.py`](../a2a_daemon_engine/handlers/a2a_graphql_subscriptions.py) | Live task/agent/message updates; `SubscriptionManager` with heartbeat monitoring |
+| Agent health monitoring | ⚠️ **Module landed** | [`a2a_health_monitor.py`](../a2a_daemon_engine/handlers/a2a_health_monitor.py) | Circuit breaker pattern, heartbeat tracking, automatic failover |
+| Rate limiting | ⚠️ **Module landed** | [`a2a_rate_limiter.py`](../a2a_daemon_engine/handlers/a2a_rate_limiter.py) | Token bucket + sliding window; per-skill quotas in Agent Card |
+| Cancellation propagation | ⚠️ **Module landed** | [`a2a_cancellation.py`](../a2a_daemon_engine/handlers/a2a_cancellation.py) | Delegated chain cancellation via `CancellationPropagator` |
+| Secure Passport extension | ⏳ **Scaffold** | [`a2a_secure_passport.py`](../a2a_daemon_engine/handlers/a2a_secure_passport.py) | PII/cross-trust scaffold; full implementation pending use case |
+| Cost/quota visibility | ⏳ **Scaffold** | [`a2a_cost_extension.py`](../a2a_daemon_engine/handlers/a2a_cost_extension.py) | Cost tracking scaffold; integration with billing system pending |
 
 ---
 
@@ -610,11 +613,11 @@ curl -X POST http://localhost:8001/ \
 |------|-------|-------|
 | HTTP | `poetry run a2a-daemon` → Uvicorn on `:8001` | Default; A2A SDK app primary, FastAPI mounted at `/rest` |
 | Lambda | `A2ADaemonEngine.a2a(...)` invoked from Lambda handler | Action-based or JSON-RPC dispatch |
-| gRPC | Phase 9 | Currently raises `NotImplementedError` |
+| gRPC | Phase 9 | Experimental JSON-over-gRPC transport implemented; live validation pending |
 
 ### 10.4 Key Codebase Metrics (verified 2026-05-07)
 
-- **Codebase**: ~8,500+ LoC across the core package, plus new Phase 6-8 helpers/tests
+- **Codebase**: ~8,500+ LoC across the core package, plus new Phase 6-9 helpers/tests
 - **Test coverage**: Not release-certified yet (target: ≥70% on `handlers/`)
   - Unit/mock tests: Phase 6, executor, handler, JWT, and Phase 8 test files have been added
   - Integration tests: Require sibling SilvaEngine packages plus DynamoDB/local DynamoDB
@@ -624,7 +627,7 @@ curl -X POST http://localhost:8001/ \
 - **Phase 6**: Implementation complete; live SDK/runtime validation pending
 - **Phase 7**: Feature modules landed; end-to-end streaming/push validation pending
 - **Phase 8**: Hardening modules landed; app wiring/compliance validation pending
-- **Phase 9**: 0% complete
+- **Phase 9**: Advanced-extension modules landed; live transport/integration validation pending
 
 ---
 

@@ -1,11 +1,10 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 __author__ = "bibow"
 
 import functools
 import traceback
 import uuid
-from typing import Any, Dict
+from typing import Any
 
 import pendulum
 from graphene import ResolveInfo
@@ -15,8 +14,6 @@ from pynamodb.attributes import (
     UTCDateTimeAttribute,
 )
 from pynamodb.indexes import AllProjection, LocalSecondaryIndex
-from tenacity import retry, stop_after_attempt, wait_exponential
-
 from silvaengine_dynamodb_base import (
     BaseModel,
     delete_decorator,
@@ -26,6 +23,7 @@ from silvaengine_dynamodb_base import (
 )
 from silvaengine_utility import method_cache
 from silvaengine_utility.serializer import Serializer
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..handlers.config import Config
 from ..types.a2a_task import A2ATaskListType, A2ATaskType
@@ -172,7 +170,7 @@ def get_a2a_task_type(info: ResolveInfo, a2a_task: A2ATaskModel) -> A2ATaskType:
     return A2ATaskType(**Serializer.json_normalize(a2a_task))
 
 
-def resolve_a2a_task(info: ResolveInfo, **kwargs: Dict[str, Any]) -> A2ATaskType | None:
+def resolve_a2a_task(info: ResolveInfo, **kwargs: dict[str, Any]) -> A2ATaskType | None:
     count = get_a2a_task_count(info.context["partition_key"], kwargs["task_id"])
     if count == 0:
         return None
@@ -188,7 +186,7 @@ def resolve_a2a_task(info: ResolveInfo, **kwargs: Dict[str, Any]) -> A2ATaskType
     list_type_class=A2ATaskListType,
     type_funct=get_a2a_task_type,
 )
-def resolve_a2a_task_list(info: ResolveInfo, **kwargs: Dict[str, Any]) -> Any:
+def resolve_a2a_task_list(info: ResolveInfo, **kwargs: dict[str, Any]) -> Any:
     partition_key = info.context["partition_key"]
     status = kwargs.get("status")
     priority = kwargs.get("priority")
@@ -231,7 +229,7 @@ def resolve_a2a_task_list(info: ResolveInfo, **kwargs: Dict[str, Any]) -> Any:
     type_funct=get_a2a_task_type,
 )
 @purge_cache()
-def insert_update_a2a_task(info: ResolveInfo, **kwargs: Dict[str, Any]) -> None:
+def insert_update_a2a_task(info: ResolveInfo, **kwargs: dict[str, Any]) -> None:
     # Construct partition_key from endpoint_id and part_id if not provided
     partition_key = kwargs.get("partition_key") or info.context.get("partition_key")
 
@@ -308,7 +306,7 @@ def insert_update_a2a_task(info: ResolveInfo, **kwargs: Dict[str, Any]) -> None:
     model_funct=get_a2a_task,
 )
 @purge_cache()
-def delete_a2a_task(info: ResolveInfo, **kwargs: Dict[str, Any]) -> bool:
+def delete_a2a_task(info: ResolveInfo, **kwargs: dict[str, Any]) -> bool:
 
     kwargs["entity"].delete()
     return True

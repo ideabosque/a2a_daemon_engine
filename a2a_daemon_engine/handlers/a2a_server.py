@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 A2A Protocol Server Implementation
 
@@ -17,22 +16,21 @@ This implementation provides:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # A2A SDK is now required (version >=0.3.0 with http-server extras)
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
-    AgentCard,
-    AgentSkill,
     AgentCapabilities,
+    AgentCard,
     AgentProvider,
+    AgentSkill,
 )
-
+from silvaengine_utility.serializer import Serializer
 
 from .config import Config
-from silvaengine_utility.serializer import Serializer
 
 __author__ = "SilvaEngine Team"
 
@@ -58,7 +56,7 @@ class A2AProtocolServer:
     - Integration with existing GraphQL-based storage layer
     """
 
-    def __init__(self, logger: logging.Logger, **settings: Dict[str, Any]) -> None:
+    def __init__(self, logger: logging.Logger, **settings: dict[str, Any]) -> None:
         """
         Initialize A2A Protocol Server.
 
@@ -154,7 +152,7 @@ class A2AProtocolServer:
 
         # Phase 7: Initialize SSE streaming components
         from .a2a_sse import SSEEventQueue, StreamingTaskManager, create_sse_endpoints
-        
+
         self.sse_event_queue = SSEEventQueue(
             task_store=self.task_store,
             max_events_per_task=100,
@@ -216,7 +214,7 @@ class A2AProtocolServer:
             f"Agent card available at: {server_url}.well-known/agent-card.json"
         )
 
-    def _create_agent_skills(self, capability_list: List[str]) -> List[Any]:
+    def _create_agent_skills(self, capability_list: list[str]) -> list[Any]:
         """
         Create AgentSkills from capability strings.
 
@@ -293,7 +291,7 @@ class A2AProtocolServer:
         description: str,
         url: str,
         version: str,
-        skills: List[Any],
+        skills: list[Any],
     ) -> Any:
         """
         Create an AgentCard following the A2A SDK pattern.
@@ -359,7 +357,7 @@ class A2AProtocolServer:
         """
         return self.app
 
-    def get_routes(self) -> List[Any]:
+    def get_routes(self) -> list[Any]:
         """
         Get the A2A server routes for integration with existing applications.
 
@@ -383,8 +381,8 @@ class A2AProtocolServer:
     # =========================================================================
 
     async def handle_handshake(
-        self, partition_key: str, agent_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, partition_key: str, agent_data: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Handle agent handshake/registration (compatibility method).
 
@@ -498,8 +496,8 @@ class A2AProtocolServer:
             raise
 
     async def assign_task(
-        self, partition_key: str, task_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, partition_key: str, task_data: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Assign a task to an agent (compatibility method).
 
@@ -606,8 +604,8 @@ class A2AProtocolServer:
             raise
 
     async def route_message(
-        self, partition_key: str, message_data: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, partition_key: str, message_data: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Route a message between agents (compatibility method).
 
@@ -714,8 +712,8 @@ class A2AProtocolServer:
             raise
 
     async def discover_agents(
-        self, partition_key: str, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Dict[str, Any]]:
+        self, partition_key: str, filters: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """
         Discover available agents in the network (compatibility method).
 

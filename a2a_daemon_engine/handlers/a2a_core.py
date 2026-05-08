@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 A2A Core GraphQL Handler
 
@@ -8,10 +7,9 @@ Inherits from silvaengine_utility.graphql.Graphql for GraphQL execution.
 """
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from graphene import Schema
-
 from silvaengine_dynamodb_base import BaseModel
 from silvaengine_utility.graphql import Graphql
 
@@ -29,7 +27,7 @@ class A2ACore(Graphql):
     This class only executes GraphQL operations - it does not assemble partition_key.
     """
 
-    def __init__(self, logger: logging.Logger, **setting: Dict[str, Any]) -> None:
+    def __init__(self, logger: logging.Logger, **setting: dict[str, Any]) -> None:
         """
         Initialize A2A Core handler.
 
@@ -51,7 +49,7 @@ class A2ACore(Graphql):
             BaseModel.Meta.aws_secret_access_key = setting.get("aws_secret_access_key")
             logger.info(f"DynamoDB configured for region: {setting.get('region_name')}")
 
-    def a2a_core_graphql(self, **params: Dict[str, Any]) -> Any:
+    def a2a_core_graphql(self, **params: dict[str, Any]) -> Any:
         """
         Execute GraphQL queries/mutations for A2A operations.
 

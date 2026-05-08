@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 A2A Daemon Engine Tests
 
@@ -33,7 +32,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger()
 
-from silvaengine_utility import Serializer
+from silvaengine_utility import Serializer  # noqa: E402
 
 # ============================================================================
 # UNIT TESTS - A2A Actions with Mocks
@@ -373,9 +372,7 @@ def test_a2a_actions_parametrized(mock_engine, action, payload):
             )
             result_json = mock_engine.a2a(**payload)
     elif action == "execute_task":
-        with patch(
-            "a2a_daemon_engine.handlers.a2a_utility.execute_a2a_task"
-        ) as mock_exec:
+        with patch("a2a_daemon_engine.handlers.a2a_utility.execute_a2a_task"):
             result_json = mock_engine.a2a(**payload)
 
     result = Serializer.json_loads(result_json)

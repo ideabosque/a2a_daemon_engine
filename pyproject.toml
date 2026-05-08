@@ -143,4 +143,5 @@ markers = [
     "server: A2A server tests",
     "graphql: GraphQL schema tests",
     "cache: Cache configuration tests",
+    "performance: Performance and load-oriented tests",
 ]

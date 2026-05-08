@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 A2A Phase 6 Test Suite - SDK v1.0 Compatibility
 
@@ -61,12 +60,12 @@ def mock_task_store():
 
 class TestTaskStateCompatibility:
     """Test TaskState enum casing compatibility (v1.0 SCREAMING_SNAKE_CASE)."""
-    
+
     def test_task_state_uppercase_resolution(self):
         """Test that uppercase v1.0 task states resolve correctly."""
         # Import the helper
         from a2a_daemon_engine.handlers.a2a_executor import _task_state
-        
+
         # Test all v1.0 states
         states = [
             "WORKING",
@@ -77,7 +76,7 @@ class TestTaskStateCompatibility:
             "CANCELED",
             "REJECTED",
         ]
-        
+
         for state in states:
             try:
                 result = _task_state(state)
@@ -85,11 +84,11 @@ class TestTaskStateCompatibility:
                 assert result is not None
             except Exception as e:
                 pytest.fail(f"Failed to resolve state {state}: {e}")
-    
+
     def test_task_state_lowercase_fallback(self):
         """Test that lowercase states fallback for backward compatibility."""
         from a2a_daemon_engine.handlers.a2a_executor import _task_state
-        
+
         # Test lowercase fallbacks
         fallback_states = [
             "working",
@@ -98,18 +97,18 @@ class TestTaskStateCompatibility:
             "failed",
             "canceled",
         ]
-        
+
         for state in fallback_states:
             try:
                 result = _task_state(state.upper())  # Helper expects uppercase
                 assert result is not None
             except Exception as e:
                 pytest.fail(f"Failed to resolve fallback state {state}: {e}")
-    
+
     def test_task_state_aliases(self):
         """Test that state aliases work correctly."""
         from a2a_daemon_engine.handlers.a2a_executor import _task_state
-        
+
         # Test aliases
         aliases = {
             "AUTH_REQUIRED": "INPUT_REQUIRED",  # Alias mapping
@@ -117,12 +116,12 @@ class TestTaskStateCompatibility:
             "SUBMITTED": "WORKING",
             "UNKNOWN": "WORKING",
         }
-        
+
         for alias, target in aliases.items():
             try:
                 result = _task_state(alias)
                 assert result is not None
-            except Exception as e:
+            except Exception:
                 # Aliases may not all resolve depending on SDK version
                 pass
 
@@ -133,7 +132,7 @@ class TestTaskStateCompatibility:
 
 class TestTaskStoreV1Compatibility:
     """Test TaskStore v1.0 compatibility features."""
-    
+
     @pytest.mark.asyncio
     async def test_list_tasks_cursor_pagination(self, mock_task_store):
         """Test ListTasks with cursor-based pagination."""
@@ -143,30 +142,30 @@ class TestTaskStoreV1Compatibility:
             limit=10,
             cursor=None,
         )
-        
+
         # Should return tuple of (tasks, next_cursor)
         assert isinstance(tasks, list)
         assert len(tasks) == 2
         assert next_cursor is None  # No more results
-    
+
     @pytest.mark.asyncio
     async def test_task_includes_context_id(self, mock_task_store):
         """Test that tasks include contextId field."""
         task = await mock_task_store.get("task-123")
-        
+
         # Task should have contextId
         assert "contextId" in task
         assert task["contextId"] == "ctx-456"
-    
+
     @pytest.mark.asyncio
     async def test_task_includes_timestamps(self, mock_task_store):
         """Test that tasks include createdAt and lastModified."""
         task = await mock_task_store.get("task-123")
-        
+
         # Task should have timestamps
         assert "createdAt" in task
         assert "lastModified" in task
-        
+
         # Validate timestamp format
         assert task["createdAt"].endswith("Z")
         assert task["lastModified"].endswith("Z")
@@ -178,25 +177,23 @@ class TestTaskStoreV1Compatibility:
 
 class TestExecutorV1Compatibility:
     """Test A2ADaemonExecutor v1.0 compatibility."""
-    
+
     def test_executor_accepts_streaming_manager(self, mock_logger):
         """Test that executor accepts streaming_manager parameter."""
-        # Mock the config
-        mock_config = MagicMock()
-        
         # This would need a2a SDK - test that signature supports streaming_manager
         # Import without SDK dependency check
         try:
-            from a2a_daemon_engine.handlers.a2a_executor import A2ADaemonExecutor
             # Check if constructor accepts streaming_manager
             import inspect
+
+            from a2a_daemon_engine.handlers.a2a_executor import A2ADaemonExecutor
             sig = inspect.signature(A2ADaemonExecutor.__init__)
             params = list(sig.parameters.keys())
             assert 'streaming_manager' in params
         except ImportError:
             # If SDK not available, skip test
             pytest.skip("a2a SDK not available")
-    
+
     def test_executor_has_cancel_method(self, mock_logger):
         """Test that executor has cancel() method for CancelTask."""
         try:
@@ -212,7 +209,7 @@ class TestExecutorV1Compatibility:
 
 class TestJWTSanitization:
     """Test JWT weak secret rejection (CLI-7)."""
-    
+
     def test_weak_jwt_secret_rejection(self):
         """Test that weak JWT secrets are rejected."""
         weak_secrets = [
@@ -224,7 +221,7 @@ class TestJWTSanitization:
             "admin",
             "tooshort",  # Less than 32 chars
         ]
-        
+
         for secret in weak_secrets:
             # Check if secret is weak (would be rejected by Config)
             is_weak = (
@@ -232,7 +229,7 @@ class TestJWTSanitization:
                 len(secret) < 32
             )
             assert is_weak, f"Expected {secret} to be detected as weak"
-    
+
     def test_strong_jwt_secret_acceptance(self):
         """Test that strong JWT secrets are accepted."""
         strong_secrets = [
@@ -240,7 +237,7 @@ class TestJWTSanitization:
             "a" * 64,
             "MyS3cur3JWT_S3cr3t!2026_with_Extra_Length",
         ]
-        
+
         for secret in strong_secrets:
             # Check if secret is strong
             is_strong = (
@@ -256,7 +253,7 @@ class TestJWTSanitization:
 
 class TestRPCOperations:
     """Test RPC operation signatures and implementations."""
-    
+
     def test_sendmessage_implemented(self):
         """Test that SendMessage is implemented via DefaultRequestHandler."""
         try:
@@ -265,15 +262,15 @@ class TestRPCOperations:
             assert hasattr(DefaultRequestHandler, '__init__')
         except ImportError:
             pytest.skip("a2a SDK not available")
-    
+
     def test_gettask_via_taskstore(self, mock_task_store):
         """Test that GetTask is implemented via TaskStore.get()."""
         assert hasattr(mock_task_store, 'get')
-    
+
     def test_listtasks_via_taskstore(self, mock_task_store):
         """Test that ListTasks is implemented via TaskStore.list_tasks()."""
         assert hasattr(mock_task_store, 'list_tasks')
-    
+
     def test_canceltask_via_executor(self):
         """Test that CancelTask is implemented via executor.cancel()."""
         try:
@@ -289,11 +286,11 @@ class TestRPCOperations:
 
 class TestJSONRPCDeprecation:
     """Test JSON-RPC deprecation status."""
-    
+
     def test_a2a_jsonrpc_has_deprecation_warning(self):
         """Test that a2a_jsonrpc module has deprecation warnings."""
         import warnings
-        
+
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             try:
@@ -306,7 +303,7 @@ class TestJSONRPCDeprecation:
                 )
             except ImportError:
                 pass
-    
+
     def test_sdk_handler_is_primary(self):
         """Test that SDK DefaultRequestHandler is used as primary handler."""
         try:
@@ -323,7 +320,7 @@ class TestJSONRPCDeprecation:
 
 class TestContextIdPropagation:
     """Test contextId propagation through executor and store."""
-    
+
     def test_task_model_has_context_id(self):
         """Test that task model includes context_id field."""
         # Check the model file

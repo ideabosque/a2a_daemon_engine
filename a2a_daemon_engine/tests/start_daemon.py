@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 A2A Daemon Engine - Test Startup Script
 
@@ -127,40 +126,40 @@ def print_startup_info(config: dict) -> None:
     print("\n" + "=" * 80)
     print("A2A Daemon Engine - Test Server")
     print("=" * 80)
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Region:        {config['region_name']}")
     print(f"  Endpoint ID:   {endpoint_id}")
     print(f"  Part ID:       {config['part_id']}")
     print(f"  Port:          {port}")
     print(f"  Transport:     {config['transport']}")
     print(f"  Auth Provider: {config['auth_provider']}")
-    print(f"\nAvailable Endpoints:")
+    print("\nAvailable Endpoints:")
     print(f"  Health Check:  http://localhost:{port}/health")
     print(f"  Server Info:   http://localhost:{port}/{endpoint_id}")
     print(f"  GraphQL:       http://localhost:{port}/{endpoint_id}/a2a_core_graphql")
     print(f"  REST API Base: http://localhost:{port}/rest/a2a/{endpoint_id}")
     print(f"  JSON-RPC:      http://localhost:{port}/rest/a2a-jsonrpc")
-    print(f"\nExample curl commands:")
-    print(f"  # Health check")
+    print("\nExample curl commands:")
+    print("  # Health check")
     print(f"  curl http://localhost:{port}/health")
-    print(f"\n  # GraphQL ping")
+    print("\n  # GraphQL ping")
     print(f"  curl -X POST http://localhost:{port}/{endpoint_id}/a2a_core_graphql \\\n")
-    print(f'    -H "Content-Type: application/json" \\\n')
-    print(f'    -d \'{{"query": "query {{ ping }}"}}\'')
-    print(f"\n  # Register agent (requires JWT token)")
+    print('    -H "Content-Type: application/json" \\\n')
+    print('    -d \'{"query": "query { ping }"}\'')
+    print("\n  # Register agent (requires JWT token)")
     print(
         f"  curl -X POST http://localhost:{port}/rest/a2a/{endpoint_id}/agents/register \\\n"
     )
-    print(f'    -H "Content-Type: application/json" \\\n')
-    print(f'    -H "Authorization: Bearer <your-jwt-token>" \\\n')
+    print('    -H "Content-Type: application/json" \\\n')
+    print('    -H "Authorization: Bearer <your-jwt-token>" \\\n')
     print(
-        f'    -d \'{{"agent_id": "agent-001", "agent_name": "Test Agent", "capabilities": ["text"], "endpoint_url": "http://localhost:9001"}}\''
+        '    -d \'{"agent_id": "agent-001", "agent_name": "Test Agent", "capabilities": ["text"], "endpoint_url": "http://localhost:9001"}\''
     )
-    print(f"\n  # JSON-RPC")
+    print("\n  # JSON-RPC")
     print(f"  curl -X POST http://localhost:{port}/rest/a2a-jsonrpc \\\n")
-    print(f'    -H "Content-Type: application/json" \\\n')
+    print('    -H "Content-Type: application/json" \\\n')
     print(
-        f'    -d \'{{"jsonrpc": "2.0", "method": "agent.getCard", "params": {{}}, "id": 1}}\''
+        '    -d \'{"jsonrpc": "2.0", "method": "agent.getCard", "params": {}, "id": 1}\''
     )
     print("\n" + "=" * 80)
     print("Press Ctrl+C to stop the server")
@@ -284,7 +283,7 @@ Examples:
     except KeyboardInterrupt:
         print("\n\nShutting down gracefully...")
         sys.exit(0)
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to start daemon")
         sys.exit(1)
 

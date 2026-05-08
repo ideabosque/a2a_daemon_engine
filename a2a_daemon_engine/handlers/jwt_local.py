@@ -1,12 +1,11 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 Local JWT Token Management for A2A Daemon Engine
 
 Handles creation and verification of local JWT tokens using HS256 algorithm.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 import jwt
 import pendulum
@@ -17,7 +16,7 @@ from .config import Config
 __author__ = "SilvaEngine Team"
 
 
-def create_local_jwt(payload: Dict[str, Any]) -> str:
+def create_local_jwt(payload: dict[str, Any]) -> str:
     """
     Create a local JWT token.
 
@@ -52,7 +51,7 @@ def create_local_jwt(payload: Dict[str, Any]) -> str:
     return token
 
 
-def verify_local_jwt(token: str) -> Dict[str, Any]:
+def verify_local_jwt(token: str) -> dict[str, Any]:
     """
     Verify and decode a local JWT token.
 

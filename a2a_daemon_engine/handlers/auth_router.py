@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 Authentication Router for A2A Daemon Engine
 
@@ -10,7 +9,7 @@ Supports both local JWT and AWS Cognito authentication.
 import base64
 import hashlib
 import hmac
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import OAuth2PasswordRequestForm
@@ -73,7 +72,7 @@ def login(form: OAuth2PasswordRequestForm = Depends()):
         return get_local_token(form.username, form.password)
 
 
-def get_local_token(username: str, password: str) -> Dict[str, Any]:
+def get_local_token(username: str, password: str) -> dict[str, Any]:
     """
     Get local JWT token.
 
@@ -106,7 +105,7 @@ def get_local_token(username: str, password: str) -> Dict[str, Any]:
     return {"access_token": token, "token_type": "bearer"}
 
 
-def get_cognito_token(username: str, password: str) -> Dict[str, Any]:
+def get_cognito_token(username: str, password: str) -> dict[str, Any]:
     """
     Get Cognito JWT token.
 

@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 Configuration Management for A2A Daemon Engine
 
@@ -14,7 +13,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import boto3
 from passlib.context import CryptContext
@@ -32,7 +31,7 @@ class LocalUser:
 
     username: str
     password_hash: str
-    roles: List[str]
+    roles: list[str]
 
     def verify(self, plain: str) -> bool:
         """Verify plain password against stored hash"""
@@ -116,7 +115,7 @@ class Config:
     }
 
     # Application Settings
-    setting: Dict[str, Any] = {}
+    setting: dict[str, Any] = {}
 
     # Server Configuration
     transport = None
@@ -150,7 +149,7 @@ class Config:
     jwks_cache_ttl: int | None = None  # seconds
 
     @classmethod
-    def initialize(cls, logger: logging.Logger, **setting: Dict[str, Any]) -> None:
+    def initialize(cls, logger: logging.Logger, **setting: dict[str, Any]) -> None:
         """
         Initialize configuration settings.
 
@@ -173,7 +172,7 @@ class Config:
             raise e
 
     @classmethod
-    def _set_parameters(cls, setting: Dict[str, Any]) -> None:
+    def _set_parameters(cls, setting: dict[str, Any]) -> None:
         """Set application-level parameters."""
         cls.transport = setting.get("transport", "http")
         cls.port = setting.get("port", 8001)
@@ -225,7 +224,7 @@ class Config:
 
     @classmethod
     def _initialize_a2a_core(
-        cls, logger: logging.Logger, setting: Dict[str, Any]
+        cls, logger: logging.Logger, setting: dict[str, Any]
     ) -> None:
         """Initialize A2A Core with AWS credentials."""
         if all(
@@ -239,7 +238,7 @@ class Config:
 
     @classmethod
     def _initialize_a2a_server(
-        cls, logger: logging.Logger, setting: Dict[str, Any]
+        cls, logger: logging.Logger, setting: dict[str, Any]
     ) -> None:
         """Initialize A2A Protocol Server."""
         try:
@@ -253,7 +252,7 @@ class Config:
 
     @classmethod
     def _initialize_aws_services(
-        cls, logger: logging.Logger, setting: Dict[str, Any]
+        cls, logger: logging.Logger, setting: dict[str, Any]
     ) -> None:
         """Initialize AWS services including S3, Cognito IDP, and Lambda clients."""
         try:
@@ -342,16 +341,16 @@ class Config:
         return cls.CACHE_ENABLED
 
     @classmethod
-    def get_cache_entity_config(cls) -> Dict[str, Dict[str, Any]]:
+    def get_cache_entity_config(cls) -> dict[str, dict[str, Any]]:
         """Get cache configuration metadata for each entity type."""
         return cls.CACHE_ENTITY_CONFIG
 
     @classmethod
-    def get_cache_relationships(cls) -> Dict[str, List[Dict[str, Any]]]:
+    def get_cache_relationships(cls) -> dict[str, list[dict[str, Any]]]:
         """Get entity cache dependency relationships."""
         return cls.CACHE_RELATIONSHIPS
 
     @classmethod
-    def get_entity_children(cls, entity_type: str) -> List[Dict[str, Any]]:
+    def get_entity_children(cls, entity_type: str) -> list[dict[str, Any]]:
         """Get child entities for a specific entity type."""
         return cls.CACHE_RELATIONSHIPS.get(entity_type, [])

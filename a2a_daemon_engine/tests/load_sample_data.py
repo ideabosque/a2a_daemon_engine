@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 Load Sample A2A Data Script
 
@@ -359,7 +358,7 @@ def generate_and_load_data(engine):
         )
 
         if result:
-            logger.info(f"  -> Message sent")
+            logger.info("  -> Message sent")
 
             test_data_updates["messages"].append(
                 {
@@ -400,7 +399,7 @@ def generate_and_load_data(engine):
         )
 
         if result:
-            logger.info(f"  -> Task executed")
+            logger.info("  -> Task executed")
 
             test_data_updates["task_executions"].append(
                 {
@@ -425,7 +424,7 @@ if __name__ == "__main__":
     generate_and_load_data(engine_instance)
 
     logger.info("\n--- Data Loading Complete ---")
-    logger.info(f"Generated:")
+    logger.info("Generated:")
     logger.info(f"  - {NUM_AGENTS} agents")
     logger.info(f"  - {NUM_AGENTS * NUM_TASKS_PER_AGENT} tasks")
     logger.info(f"  - {NUM_MESSAGES} messages")

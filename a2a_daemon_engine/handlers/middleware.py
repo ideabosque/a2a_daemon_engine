@@ -1,12 +1,11 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 JWT Authentication Middleware for A2A Daemon Engine
 
 Flexible JWT middleware supporting both local JWT and AWS Cognito authentication.
 """
 
-from typing import Iterable, List
+from collections.abc import Iterable
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -40,7 +39,7 @@ class FlexJWTMiddleware(BaseHTTPMiddleware):
             public_paths: List of path prefixes that don't require authentication
         """
         super().__init__(app)
-        self.public_paths: List[str] = list(public_paths) + [
+        self.public_paths: list[str] = list(public_paths) + [
             "/auth",
             "/docs",
             "/openapi.json",

@@ -1,10 +1,9 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 
 __author__ = "bibow"
 
 import time
-from typing import Any, Dict
+from typing import Any
 
 from graphene import Field, Int, ObjectType, ResolveInfo, String
 
@@ -97,42 +96,42 @@ class Query(ObjectType):
         return f"Hello at {time.strftime('%X')}!!"
 
     def resolve_a2a_agent(
-        self, info: ResolveInfo, **kwargs: Dict[str, Any]
+        self, info: ResolveInfo, **kwargs: dict[str, Any]
     ) -> A2AAgentType:
         return resolve_a2a_agent(info, **kwargs)
 
     def resolve_a2a_agent_list(
-        self, info: ResolveInfo, **kwargs: Dict[str, Any]
+        self, info: ResolveInfo, **kwargs: dict[str, Any]
     ) -> A2AAgentListType:
         return resolve_a2a_agent_list(info, **kwargs)
 
     def resolve_a2a_task(
-        self, info: ResolveInfo, **kwargs: Dict[str, Any]
+        self, info: ResolveInfo, **kwargs: dict[str, Any]
     ) -> A2ATaskType:
         return resolve_a2a_task(info, **kwargs)
 
     def resolve_a2a_task_list(
-        self, info: ResolveInfo, **kwargs: Dict[str, Any]
+        self, info: ResolveInfo, **kwargs: dict[str, Any]
     ) -> A2ATaskListType:
         return resolve_a2a_task_list(info, **kwargs)
 
     def resolve_a2a_message(
-        self, info: ResolveInfo, **kwargs: Dict[str, Any]
+        self, info: ResolveInfo, **kwargs: dict[str, Any]
     ) -> A2AMessageType:
         return resolve_a2a_message(info, **kwargs)
 
     def resolve_a2a_message_list(
-        self, info: ResolveInfo, **kwargs: Dict[str, Any]
+        self, info: ResolveInfo, **kwargs: dict[str, Any]
     ) -> A2AMessageListType:
         return resolve_a2a_message_list(info, **kwargs)
 
     def resolve_a2a_setting(
-        self, info: ResolveInfo, **kwargs: Dict[str, Any]
+        self, info: ResolveInfo, **kwargs: dict[str, Any]
     ) -> A2ASettingType:
         return resolve_a2a_setting(info, **kwargs)
 
     def resolve_a2a_setting_list(
-        self, info: ResolveInfo, **kwargs: Dict[str, Any]
+        self, info: ResolveInfo, **kwargs: dict[str, Any]
     ) -> A2ASettingListType:
         return resolve_a2a_setting_list(info, **kwargs)
 

@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """
 AI A2A Daemon Engine - Main Entry Point
 
@@ -11,7 +10,7 @@ import json
 import logging
 import os
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 from silvaengine_utility.serializer import Serializer
 
@@ -21,7 +20,7 @@ __author__ = "SilvaEngine Team"
 
 
 # Hook function applied to deployment
-def deploy() -> List:
+def deploy() -> list:
     """
     Deployment hook for service registration.
 
@@ -119,7 +118,7 @@ def deploy() -> List:
     ]
 
 
-class A2ADaemonEngine(object):
+class A2ADaemonEngine:
     """
     A2A Daemon Engine Main Class
 
@@ -130,7 +129,7 @@ class A2ADaemonEngine(object):
     - HTTP/gRPC server execution
     """
 
-    def __init__(self, logger: logging.Logger, **setting: Dict[str, Any]) -> None:
+    def __init__(self, logger: logging.Logger, **setting: dict[str, Any]) -> None:
         """
         Initialize A2A Daemon Engine.
 
@@ -165,7 +164,7 @@ class A2ADaemonEngine(object):
             future = executor.submit(asyncio.run, coro)
             return future.result()
 
-    def _apply_partition_defaults(self, params: Dict[str, Any]) -> None:
+    def _apply_partition_defaults(self, params: dict[str, Any]) -> None:
         """
         Ensure endpoint_id/part_id defaults and assemble partition_key.
 
@@ -191,7 +190,7 @@ class A2ADaemonEngine(object):
             f"{endpoint_id}#{part_id}" if part_id else f"{endpoint_id}"
         )
 
-    def a2a_core_graphql(self, **params: Dict[str, Any]) -> Any:
+    def a2a_core_graphql(self, **params: dict[str, Any]) -> Any:
         """
         GraphQL endpoint with partition_key assembly.
 
@@ -206,7 +205,7 @@ class A2ADaemonEngine(object):
         self._apply_partition_defaults(params)
         return Config.a2a_core.a2a_core_graphql(**params)
 
-    def a2a(self, **params: Dict[str, Any]) -> Dict[str, Any]:
+    def a2a(self, **params: dict[str, Any]) -> dict[str, Any]:
         """
         Unified A2A Protocol Handler.
 
@@ -281,9 +280,9 @@ class A2ADaemonEngine(object):
             try:
                 from a2a.server.context import ServerCallContext
                 from a2a.types import (
-                    SendMessageRequest,
-                    GetTaskRequest,
                     CancelTaskRequest,
+                    GetTaskRequest,
+                    SendMessageRequest,
                 )
 
                 context = ServerCallContext(
@@ -356,8 +355,8 @@ class A2ADaemonEngine(object):
 
         from .handlers.a2a_handlers import (
             handle_agent_handshake,
-            handle_task_assignment,
             handle_message_routing,
+            handle_task_assignment,
         )
 
         if action == "register_agent":
@@ -441,9 +440,9 @@ class A2ADaemonEngine(object):
 
                 self.logger.info("A2A SDK app initialized as primary application")
                 self.logger.info(
-                    f"Agent card auto-exposed at: /.well-known/agent-card.json"
+                    "Agent card auto-exposed at: /.well-known/agent-card.json"
                 )
-                self.logger.info(f"Native A2A JSON-RPC at: /")
+                self.logger.info("Native A2A JSON-RPC at: /")
 
                 # Create a new FastAPI app for REST routes only
                 rest_app = FastAPI(title="A2A Daemon REST API")
@@ -492,14 +491,28 @@ class A2ADaemonEngine(object):
 
             elif self.transport == "grpc":
                 self.logger.info("Running A2A Daemon in gRPC mode...")
-                # TODO: Implement gRPC server
-                raise NotImplementedError("gRPC transport not yet implemented")
+                # Phase 9: gRPC transport implementation
+                from .handlers.a2a_grpc import A2AGRPCServer, GRPCConfig
+
+                grpc_config = GRPCConfig(
+                    host="0.0.0.0",
+                    port=self.port,
+                    max_workers=10,
+                )
+
+                server = A2AGRPCServer(
+                    agent_executor=self.agent_executor,
+                    task_store=self.task_store,
+                    config=grpc_config,
+                    logger=self.logger,
+                )
+                await server.start()
             else:
                 raise ValueError(f"Unsupported transport: {self.transport}")
 
         except KeyboardInterrupt:
             self.logger.info("Daemon interrupted by user.")
-        except Exception as e:
+        except Exception:
             self.logger.exception("Fatal daemon error")
             sys.exit(1)
 
@@ -530,7 +543,7 @@ def main():
             "transport": transport,
             "port": int(os.getenv("PORT", "8001")),
             "a2a_configuration": (
-                json.load(open(a2a_config_file, "r")) if a2a_config_file else None
+                json.load(open(a2a_config_file)) if a2a_config_file else None
             ),
             "auth_provider": os.getenv("AUTH_PROVIDER", "local").lower(),
             "local_user_file": os.getenv("LOCAL_USER_FILE"),

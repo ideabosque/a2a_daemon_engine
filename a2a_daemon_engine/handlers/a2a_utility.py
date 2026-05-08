@@ -1,18 +1,18 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """Utility functions for A2A operations"""
 
 import json
 import traceback
-from typing import Any, Dict
+from typing import Any
+
+from silvaengine_utility.serializer import Serializer
 
 from .config import Config
-from silvaengine_utility.serializer import Serializer
 
 __author__ = "SilvaEngine Team"
 
 
-def format_agent_response(agent: Dict[str, Any]) -> Dict[str, Any]:
+def format_agent_response(agent: dict[str, Any]) -> dict[str, Any]:
     """
     Format agent data for API response.
 
@@ -31,7 +31,7 @@ def format_agent_response(agent: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def format_task_response(task: Dict[str, Any]) -> Dict[str, Any]:
+def format_task_response(task: dict[str, Any]) -> dict[str, Any]:
     """
     Format task data for API response.
 
@@ -50,7 +50,7 @@ def format_task_response(task: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def format_message_response(message: Dict[str, Any]) -> Dict[str, Any]:
+def format_message_response(message: dict[str, Any]) -> dict[str, Any]:
     """
     Format message data for API response.
 
@@ -70,7 +70,7 @@ def format_message_response(message: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def execute_a2a_task(
-    partition_key: str, task_id: str, task_params: Dict[str, Any]
+    partition_key: str, task_id: str, task_params: dict[str, Any]
 ) -> None:
     """
     Execute an A2A task asynchronously.
@@ -151,7 +151,7 @@ def execute_a2a_task(
         )
 
 
-def _get_task(partition_key: str, task_id: str) -> Dict[str, Any]:
+def _get_task(partition_key: str, task_id: str) -> dict[str, Any]:
     """Get task details from database."""
     try:
         query = """
@@ -228,7 +228,7 @@ def _update_task_status(partition_key: str, task_id: str, status: str) -> None:
 
 
 def _update_task_completion(
-    partition_key: str, task_id: str, status: str, output_data: Dict[str, Any]
+    partition_key: str, task_id: str, status: str, output_data: dict[str, Any]
 ) -> None:
     """Update task with completion status and output."""
     try:
@@ -273,8 +273,8 @@ def _update_task_completion(
 
 
 def _execute_task_by_type(
-    task_type: str, input_data: Dict[str, Any], task_params: Dict[str, Any]
-) -> Dict[str, Any]:
+    task_type: str, input_data: dict[str, Any], task_params: dict[str, Any]
+) -> dict[str, Any]:
     """
     Execute task based on task type.
 
@@ -328,7 +328,7 @@ def _execute_task_by_type(
         }
 
 
-def load_a2a_configuration(config_file: str) -> Dict[str, Any]:
+def load_a2a_configuration(config_file: str) -> dict[str, Any]:
     """
     Load A2A configuration from JSON file.
 
@@ -339,7 +339,7 @@ def load_a2a_configuration(config_file: str) -> Dict[str, Any]:
         Configuration dictionary
     """
     try:
-        with open(config_file, "r") as f:
+        with open(config_file) as f:
             config = json.load(f)
 
         if Config.logger:
@@ -355,7 +355,7 @@ def load_a2a_configuration(config_file: str) -> Dict[str, Any]:
 
 def get_a2a_configuration_with_retry(
     partition_key: str, max_retries: int = 3
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Fetch A2A configuration with retry logic.
 
@@ -434,8 +434,8 @@ def get_a2a_configuration_with_retry(
 
 
 async def insert_a2a_task(
-    partition_key: str, task_data: Dict[str, Any]
-) -> Dict[str, Any]:
+    partition_key: str, task_data: dict[str, Any]
+) -> dict[str, Any]:
     """
     Create a new A2A task in DynamoDB.
 
@@ -534,7 +534,7 @@ async def insert_a2a_task(
     }
 
 
-async def get_a2a_task(partition_key: str, task_id: str) -> Dict[str, Any]:
+async def get_a2a_task(partition_key: str, task_id: str) -> dict[str, Any]:
     """
     Retrieve an A2A task from DynamoDB.
 
@@ -600,8 +600,8 @@ async def get_a2a_task(partition_key: str, task_id: str) -> Dict[str, Any]:
 
 
 async def update_a2a_task(
-    partition_key: str, task_id: str, task_data: Dict[str, Any]
-) -> Dict[str, Any]:
+    partition_key: str, task_id: str, task_data: dict[str, Any]
+) -> dict[str, Any]:
     """
     Update an A2A task in DynamoDB.
 
@@ -743,7 +743,7 @@ async def delete_a2a_task(partition_key: str, task_id: str) -> bool:
 
 
 async def query_a2a_task(
-    partition_key: str, filter_dict: Dict[str, Any] = None, limit: int = 100
+    partition_key: str, filter_dict: dict[str, Any] = None, limit: int = 100
 ) -> list:
     """
     Query A2A tasks from DynamoDB with optional filters.

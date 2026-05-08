@@ -1,12 +1,10 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 __author__ = "bibow"
 
 import traceback
-from typing import Any, Dict
+from typing import Any
 
 from graphene import Boolean, Field, List, Mutation, String
-
 from silvaengine_utility import JSON
 
 from ..models.a2a_agent import delete_a2a_agent, insert_update_a2a_agent
@@ -29,7 +27,7 @@ class InsertUpdateA2aAgent(Mutation):
 
     @staticmethod
     def mutate(
-        root: Any, info: Any, **kwargs: Dict[str, Any]
+        root: Any, info: Any, **kwargs: dict[str, Any]
     ) -> "InsertUpdateA2aAgent":
         try:
             a2a_agent = insert_update_a2a_agent(info, **kwargs)
@@ -48,7 +46,7 @@ class DeleteA2aAgent(Mutation):
         agent_id = String(required=True)
 
     @staticmethod
-    def mutate(root: Any, info: Any, **kwargs: Dict[str, Any]) -> "DeleteA2aAgent":
+    def mutate(root: Any, info: Any, **kwargs: dict[str, Any]) -> "DeleteA2aAgent":
         try:
             ok = delete_a2a_agent(info, **kwargs)
         except Exception as e:

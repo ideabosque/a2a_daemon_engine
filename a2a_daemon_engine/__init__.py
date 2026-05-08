@@ -1,5 +1,4 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 """AI A2A Daemon Engine"""
 
 __author__ = "SilvaEngine Team"

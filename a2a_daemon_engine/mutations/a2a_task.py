@@ -1,12 +1,10 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
 __author__ = "bibow"
 
 import traceback
-from typing import Any, Dict
+from typing import Any
 
 from graphene import Boolean, Field, Mutation, String
-
 from silvaengine_utility import JSON
 
 from ..models.a2a_task import delete_a2a_task, insert_update_a2a_task
@@ -30,7 +28,7 @@ class InsertUpdateA2aTask(Mutation):
 
     @staticmethod
     def mutate(
-        root: Any, info: Any, **kwargs: Dict[str, Any]
+        root: Any, info: Any, **kwargs: dict[str, Any]
     ) -> "InsertUpdateA2aTask":
         try:
             a2a_task = insert_update_a2a_task(info, **kwargs)
@@ -49,7 +47,7 @@ class DeleteA2aTask(Mutation):
         task_id = String(required=True)
 
     @staticmethod
-    def mutate(root: Any, info: Any, **kwargs: Dict[str, Any]) -> "DeleteA2aTask":
+    def mutate(root: Any, info: Any, **kwargs: dict[str, Any]) -> "DeleteA2aTask":
         try:
             ok = delete_a2a_task(info, **kwargs)
         except Exception as e:

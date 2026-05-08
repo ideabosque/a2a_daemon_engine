@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 __author__ = "bibow"
 
 import logging
 from functools import lru_cache
-from typing import Any, Dict, Optional
+from typing import Any
 
 from silvaengine_dynamodb_base.cache_utils import (
     CacheConfigResolvers,
@@ -29,10 +28,10 @@ def _get_cascading_cache_purger() -> CascadingCachePurger:
 def purge_entity_cascading_cache(
     logger: logging.Logger,
     entity_type: str,
-    context_keys: Optional[Dict[str, Any]] = None,
-    entity_keys: Optional[Dict[str, Any]] = None,
+    context_keys: dict[str, Any] | None = None,
+    entity_keys: dict[str, Any] | None = None,
     cascade_depth: int = 3,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Universal function to purge entity cache with cascading child cache support."""
     purger = _get_cascading_cache_purger()
     return purger.purge_entity_cascading_cache(
