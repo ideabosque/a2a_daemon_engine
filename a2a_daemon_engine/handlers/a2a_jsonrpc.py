@@ -229,7 +229,6 @@ def process_a2a_jsonrpc_message_sync(
     Returns:
         JSON-RPC 2.0 response
     """
-    import concurrent.futures
     import asyncio
 
     warnings.warn(

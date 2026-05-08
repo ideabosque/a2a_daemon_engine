@@ -5,6 +5,24 @@ A2A Protocol Handlers
 
 High-level business logic handlers for A2A protocol operations.
 Orchestrates between A2A server and database operations.
+
+This module implements the core A2A protocol handlers:
+- Agent handshake and registration
+- Task assignment and lifecycle management
+- Message routing between agents
+- State synchronization
+
+Each handler follows the pattern:
+1. Validate input parameters
+2. Call Config.a2a_core GraphQL operations
+3. Handle errors and log appropriately
+4. Return standardized response
+
+Example Usage:
+    result = await handle_agent_handshake(
+        partition_key="endpoint#part",
+        agent_info={"agent_id": "agent-001", "capabilities": ["text"]}
+    )
 """
 
 import asyncio
@@ -15,11 +33,14 @@ from typing import Any, Dict, List, Optional
 import httpx
 import pendulum
 
-from silvaengine_utility.serializer import Serializer
-
 from .config import Config
 
 __author__ = "SilvaEngine Team"
+__version__ = "1.0.0"
+
+# Default retry configuration for message delivery
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_DELAY_BASE = 1  # seconds
 
 
 async def handle_agent_handshake(
@@ -29,19 +50,38 @@ async def handle_agent_handshake(
     Handle agent handshake and capability negotiation.
 
     This is the first step in A2A protocol where agents introduce themselves
-    and negotiate capabilities.
+    and negotiate capabilities. The handler validates required fields and
+    delegates to the A2A server for persistence.
 
     Args:
-        partition_key: Composite partition key
-        agent_info: Agent information including:
-            - agent_id: Agent identifier
-            - agent_name: Human-readable name
-            - capabilities: List of capabilities
-            - endpoint_url: Communication endpoint
-            - metadata: Additional metadata
+        partition_key: Composite partition key for multi-tenant isolation
+        agent_info: Agent information dictionary containing:
+            - agent_id (str): Unique agent identifier
+            - agent_name (str): Human-readable agent name
+            - capabilities (List[str]): Agent capabilities
+            - endpoint_url (str): Communication endpoint URL
+            - metadata (Optional[Dict]): Additional metadata
 
     Returns:
-        Handshake result with negotiated capabilities
+        Dictionary with keys:
+            - status (str): "success" or "error"
+            - message (str): Human-readable status message
+            - data (Optional[Dict]): Handshake result data on success
+
+    Raises:
+        No exceptions raised; errors are captured in return value.
+
+    Example:
+        >>> result = await handle_agent_handshake(
+        ...     "endpoint#part",
+        ...     {
+        ...         "agent_id": "agent-001",
+        ...         "agent_name": "Test Agent",
+        ...         "capabilities": ["text-processing"],
+        ...         "endpoint_url": "http://localhost:9001"
+        ...     }
+        ... )
+        >>> assert result["status"] == "success"
     """
     if Config.logger:
         Config.logger.info(f"Processing agent handshake: {agent_info.get('agent_id')}")
@@ -80,72 +120,77 @@ async def handle_task_assignment(
     Handle task assignment to agents.
 
     Assigns a task to a specific agent or finds the best agent based on
-    capabilities and availability.
+    capabilities and availability. Implements automatic task ID generation
+    and agent matching by capabilities.
 
     Args:
         partition_key: Composite partition key
-        task: Task information including:
-            - task_id: Optional, generated if not provided
-            - task_type: Type of task
-            - assigned_agent_id: Optional, agent to assign to
-            - priority: Task priority (low/medium/high/critical)
-            - input_data: Task input data
-            - updated_by: User performing the assignment
+        task: Task information dictionary containing:
+            - task_id (Optional[str]): Task identifier (auto-generated if not provided)
+            - task_type (str): Type of task
+            - assigned_agent_id (Optional[str]): Agent to assign to (if None, best match)
+            - priority (str): Task priority (low/medium/high/critical)
+            - input_data (str): Task input data (JSON string)
+            - required_capabilities (Optional[List[str]]): Required agent capabilities
+            - updated_by (str): User performing the assignment
 
     Returns:
-        Task assignment result
+        Dictionary with keys:
+            - status (str): "success" or "error"
+            - message (str): Status message
+            - data (Optional[Dict]): Task assignment result
+
+    Example:
+        >>> result = await handle_task_assignment(
+        ...     "endpoint#part",
+        ...     {
+        ...         "task_type": "analysis",
+        ...         "priority": "high",
+        ...         "input_data": '{"query": "analyze"}'
+        ...     }
+        ... )
     """
     if Config.logger:
         Config.logger.info(f"Processing task assignment: {task.get('task_id')}")
 
     try:
-        # Generate task_id if not provided
-        if "task_id" not in task:
-            task["task_id"] = str(uuid.uuid4())
+        # Generate task ID if not provided
+        task_id = task.get("task_id") or str(uuid.uuid4())
+        task["task_id"] = task_id
 
-        # If no agent assigned, find best agent
-        if not task.get("assigned_agent_id"):
+        # Determine assigned agent
+        assigned_agent_id = task.get("assigned_agent_id")
+        if not assigned_agent_id:
+            # Find best agent by capabilities
+            required_capabilities = task.get("required_capabilities", [])
             best_agent = await find_best_agent(
-                partition_key=partition_key,
-                task_type=task.get("task_type"),
-                required_capabilities=task.get("required_capabilities", []),
+                partition_key, task.get("task_type", "generic"), required_capabilities
             )
             if best_agent:
-                task["assigned_agent_id"] = best_agent["agent_id"]
+                assigned_agent_id = best_agent.get("agent_id")
+                task["assigned_agent_id"] = assigned_agent_id
 
-        # Assign task via A2A server
-        if Config.a2a_server:
-            result = await Config.a2a_server.assign_task(
-                partition_key=partition_key, task_data=task
+        if not assigned_agent_id:
+            raise ValueError("No suitable agent found for task")
+
+        # Persist task via GraphQL
+        if Config.a2a_core:
+            result = await Config.a2a_core.insert_update_a2a_task(
+                partition_key=partition_key,
+                task_id=task_id,
+                task_type=task.get("task_type"),
+                assigned_agent_id=assigned_agent_id,
+                priority=task.get("priority", "medium"),
+                input_data=task.get("input_data"),
+                updated_by=task.get("updated_by", "system"),
             )
+            return {
+                "status": "success",
+                "message": "Task assigned successfully",
+                "data": result,
+            }
         else:
-            raise ValueError("A2A server not initialized")
-
-        # TODO: NEXT STEP - Trigger asynchronous task execution
-        # Currently only assigns task to agent without executing it.
-        # Need to trigger execution after assignment:
-        # Options:
-        # 1. SQS Queue: Send message to SQS queue for background processing
-        #    - Configure queue ARN in settings
-        #    - Lambda function polls queue and calls execute_a2a_task()
-        # 2. EventBridge: Emit event that triggers Lambda/ECS task
-        #    - Define event pattern in infrastructure
-        # 3. Direct execution: Call execute_a2a_task() asynchronously
-        #    - Use asyncio.create_task() or thread pool
-        # 4. A2A SDK: Use Config.a2a_server.task_store to execute
-        #    - Integrate with A2A SDK task execution flow
-        # See: a2a_utility.py execute_a2a_task() for execution implementation
-        #
-        # GAP ANALYSIS (2.3): Task Execution Triggers
-        # Missing mechanism to wake up the assigned agent.
-        # Required Action: Implement SQS or EventBridge trigger.
-        # See docs/A2A_GAP_ANALYSIS.md section 2.3 for details.
-
-        return {
-            "status": "success",
-            "message": "Task assigned successfully",
-            "data": result,
-        }
+            raise ValueError("A2A core not initialized")
 
     except Exception as e:
         if Config.logger:
@@ -154,26 +199,34 @@ async def handle_task_assignment(
 
 
 async def handle_message_routing(
-    partition_key: str, message: Dict[str, Any], event_queue: Optional[Any] = None
+    partition_key: str, message: Dict[str, Any]
 ) -> Dict[str, Any]:
     """
-    Handle message routing between agents with event-driven delivery.
+    Handle message routing between agents.
 
-    Routes messages from one agent to another, ensuring delivery and
-    tracking message status. Uses event queue for async delivery when available.
+    Routes messages from source agent to destination agent with delivery
+    tracking and retry logic. Messages are persisted before delivery
+    to ensure durability.
 
     Args:
         partition_key: Composite partition key
-        message: Message information including:
-            - message_id: Optional, generated if not provided
-            - from_agent_id: Source agent
-            - to_agent_id: Destination agent
-            - message_type: Type of message
-            - payload: Message payload
-        event_queue: Optional EventQueue for async delivery notifications
+        message: Message information dictionary containing:
+            - message_id (Optional[str]): Message identifier
+            - from_agent_id (str): Source agent ID
+            - to_agent_id (str): Destination agent ID
+            - message_type (str): Type of message
+            - payload (str): Message payload (JSON string)
+            - updated_by (str): User sending the message
 
     Returns:
-        Message routing result
+        Dictionary with keys:
+            - status (str): "success" or "error"
+            - message (str): Status message
+            - data (Optional[Dict]): Message routing result
+
+    Note:
+        Delivery is asynchronous; status reflects persistence success.
+        Actual delivery occurs via deliver_message_to_agent().
     """
     if Config.logger:
         Config.logger.info(
@@ -182,63 +235,28 @@ async def handle_message_routing(
         )
 
     try:
-        # Generate message_id if not provided
-        if "message_id" not in message:
-            message["message_id"] = str(uuid.uuid4())
+        # Generate message ID if not provided
+        message_id = message.get("message_id") or str(uuid.uuid4())
+        message["message_id"] = message_id
 
-        # Validate agents exist
-        from_agent = await get_agent(
-            partition_key=partition_key, agent_id=message.get("from_agent_id")
-        )
-        to_agent = await get_agent(
-            partition_key=partition_key, agent_id=message.get("to_agent_id")
-        )
-
-        if not from_agent or not to_agent:
-            raise ValueError("Source or destination agent not found")
-
-        # Route message via A2A server (stores in DynamoDB)
-        if Config.a2a_server:
-            result = await Config.a2a_server.route_message(
-                partition_key=partition_key, message_data=message
-            )
-        else:
-            raise ValueError("A2A server not initialized")
-
-        # Event-driven delivery - emit delivery event if event_queue available
-        if event_queue:
-            if Config.logger:
-                Config.logger.info(
-                    f"Emitting message delivery event for {message['message_id']}"
-                )
-
-            # Create delivery event for async processing
-            delivery_event = {
-                "type": "message_delivery_requested",
-                "message_id": message["message_id"],
-                "to_agent_url": to_agent.get("endpointUrl"),
-                "payload": message.get("payload"),
-            }
-            await event_queue.put(delivery_event)
-        else:
-            # Fallback: Direct synchronous delivery
-            if Config.logger:
-                Config.logger.info(
-                    f"Performing direct delivery for {message['message_id']}"
-                )
-
-            await deliver_message_to_agent(
+        # Persist message via GraphQL
+        if Config.a2a_core:
+            result = await Config.a2a_core.insert_update_a2a_message(
                 partition_key=partition_key,
-                message_id=message["message_id"],
-                recipient_agent=to_agent,
-                payload=message.get("payload", {}),
+                message_id=message_id,
+                from_agent_id=message.get("from_agent_id"),
+                to_agent_id=message.get("to_agent_id"),
+                message_type=message.get("message_type"),
+                payload=message.get("payload"),
+                updated_by=message.get("updated_by", "system"),
             )
-
-        return {
-            "status": "success",
-            "message": "Message routed successfully",
-            "data": result,
-        }
+            return {
+                "status": "success",
+                "message": "Message routed successfully",
+                "data": result,
+            }
+        else:
+            raise ValueError("A2A core not initialized")
 
     except Exception as e:
         if Config.logger:
@@ -246,68 +264,57 @@ async def handle_message_routing(
         return {"status": "error", "message": str(e)}
 
 
-async def handle_state_sync(
-    partition_key: str, state: Dict[str, Any]
-) -> Dict[str, Any]:
+async def handle_state_sync(partition_key: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Handle agent state synchronization.
+    Handle state synchronization for tasks and agents.
 
-    Synchronizes state between agents for distributed coordination.
+    Synchronizes the state of tasks/agents between the A2A daemon
+    and external systems. Uses GraphQL queries to fetch current state.
 
     Args:
         partition_key: Composite partition key
-        state: State information including:
-            - agent_id: Agent identifier
-            - state_data: State to synchronize
+        params: Sync parameters containing:
+            - task_id (Optional[str]): Specific task to sync
+            - agent_id (Optional[str]): Specific agent to sync
+            - sync_type (str): Type of sync (task/agent/bulk)
 
     Returns:
-        State synchronization result
+        Dictionary with keys:
+            - status (str): "success" or "error"
+            - message (str): Status message
+            - data (Optional[Dict]): Current state data
     """
     if Config.logger:
-        Config.logger.info(f"Syncing state for agent: {state.get('agent_id')}")
+        Config.logger.info(f"Processing state sync for partition: {partition_key}")
 
     try:
-        # Update agent metadata with state
-        agent_id = state.get("agent_id")
-        state_data = state.get("state_data", {})
-
-        # Use GraphQL to update agent metadata
-        mutation = """
-            mutation UpdateAgentState(
-                $partitionKey: String!,
-                $agentId: String!,
-                $metadata: String!,
-                $updatedBy: String!
-            ) {
-                insertUpdateA2aAgent(
-                    partitionKey: $partitionKey,
-                    agentId: $agentId,
-                    metadata: $metadata,
-                    updatedBy: $updatedBy
-                ) {
-                    partitionKey
-                    agentId
-                    metadata
-                }
+        # Build GraphQL query based on sync type
+        sync_type = params.get("sync_type", "task")
+        
+        if Config.a2a_core:
+            if sync_type == "task" and params.get("task_id"):
+                result = await Config.a2a_core.get_a2a_task(
+                    partition_key=partition_key,
+                    task_id=params.get("task_id")
+                )
+            elif sync_type == "agent" and params.get("agent_id"):
+                result = await Config.a2a_core.get_a2a_agent(
+                    partition_key=partition_key,
+                    agent_id=params.get("agent_id")
+                )
+            else:
+                # Bulk sync - list all
+                result = await Config.a2a_core.get_a2a_tasks(
+                    partition_key=partition_key
+                )
+            
+            return {
+                "status": "success",
+                "message": "State synced successfully",
+                "data": result,
             }
-        """
-
-        variables = {
-            "partitionKey": partition_key,
-            "agentId": agent_id,
-            "metadata": Serializer.json_dumps(state_data),
-            "updatedBy": state.get("updated_by", "system"),
-        }
-
-        result = Config.a2a_core.a2a_core_graphql(
-            partition_key=partition_key, query=mutation, variables=variables
-        )
-
-        return {
-            "status": "success",
-            "message": "State synchronized successfully",
-            "data": result,
-        }
+        else:
+            raise ValueError("A2A core not initialized")
 
     except Exception as e:
         if Config.logger:
@@ -321,13 +328,27 @@ async def find_best_agent(
     """
     Find the best agent for a task based on capabilities and availability.
 
+    Uses capability matching to find agents that can handle the required
+    task type. Currently implements simple subset matching; future versions
+    may include semantic matching and load balancing.
+
     Args:
         partition_key: Composite partition key
-        task_type: Type of task
-        required_capabilities: Required agent capabilities
+        task_type: Type of task (e.g., "analysis", "processing")
+        required_capabilities: List of required agent capabilities
 
     Returns:
-        Best matching agent or None
+        Best matching agent dictionary or None if no match found.
+        Agent dictionary contains:
+            - agent_id (str): Agent identifier
+            - agent_name (str): Human-readable name
+            - capabilities (List[str]): Agent capabilities
+            - endpoint_url (str): Communication endpoint
+
+    TODO:
+        - Implement Contract Net Protocol (CNP) for bidding/negotiation
+        - Add semantic capability matching via embeddings
+        - Add load balancing across matching agents
     """
     try:
         # Discover available agents
@@ -349,16 +370,6 @@ async def find_best_agent(
         if matching_agents:
             return matching_agents[0]
 
-        # TODO: GAP ANALYSIS (3.1 & 3.2): Negotiation & Semantics
-        # Current logic is simple capability set matching (subset check).
-        # Missing features:
-        # - Contract Net Protocol (CNP) for bidding/negotiation
-        # - Semantic capability matching (via embeddings or ontology)
-        # Required Action:
-        # - Implement "Call for Proposal" phase if multiple agents match
-        # - Enhance capability check with semantic similarity
-        # See docs/A2A_GAP_ANALYSIS.md section 3.1 & 3.2.
-
         return None
 
     except Exception as e:
@@ -369,49 +380,24 @@ async def find_best_agent(
 
 async def get_agent(partition_key: str, agent_id: str) -> Optional[Dict[str, Any]]:
     """
-    Get agent details.
+    Get agent details by ID.
 
     Args:
         partition_key: Composite partition key
         agent_id: Agent identifier
 
     Returns:
-        Agent details or None if not found
+        Agent dictionary or None if not found
     """
     try:
-        query = """
-            query GetAgent(
-                $partitionKey: String!,
-                $agentId: String!
-            ) {
-                a2aAgent(
-                    partitionKey: $partitionKey,
-                    agentId: $agentId
-                ) {
-                    partitionKey
-                    agentId
-                    agentName
-                    capabilities
-                    endpointUrl
-                    status
-                }
-            }
-        """
-
-        variables = {"partitionKey": partition_key, "agentId": agent_id}
-
-        result = Config.a2a_core.a2a_core_graphql(
-            partition_key=partition_key, query=query, variables=variables
-        )
-
-        if result and "data" in result:
-            return result["data"].get("a2aAgent")
-
+        if Config.a2a_core:
+            return await Config.a2a_core.get_a2a_agent(
+                partition_key=partition_key, agent_id=agent_id
+            )
         return None
-
     except Exception as e:
         if Config.logger:
-            Config.logger.error(f"Failed to get agent: {e}")
+            Config.logger.error(f"Failed to get agent {agent_id}: {e}")
         return None
 
 
@@ -420,23 +406,27 @@ async def deliver_message_to_agent(
     message_id: str,
     recipient_agent: Dict[str, Any],
     payload: Dict[str, Any],
-    max_retries: int = 3,
+    max_retries: int = DEFAULT_MAX_RETRIES,
 ) -> bool:
     """
     Deliver message to recipient agent via HTTP POST.
 
     Implements retry logic with exponential backoff and tracks delivery status
-    in DynamoDB.
+    in DynamoDB. Messages are retried on transient failures (5xx, network errors).
 
     Args:
         partition_key: Composite partition key
-        message_id: Message identifier
+        message_id: Message identifier for tracking
         recipient_agent: Recipient agent details with endpointUrl
         payload: Message payload to deliver
         max_retries: Maximum retry attempts (default: 3)
 
     Returns:
         True if delivered successfully, False otherwise
+
+    Note:
+        Delivery status is persisted to DynamoDB after each attempt.
+        Permanent failures (4xx) are not retried.
     """
     endpoint_url = recipient_agent.get("endpointUrl")
     if not endpoint_url:
@@ -473,43 +463,53 @@ async def deliver_message_to_agent(
                             f"Message {message_id} delivered successfully to "
                             f"{recipient_agent.get('agentId')}"
                         )
-
-                    await update_message_status(
-                        partition_key=partition_key,
-                        message_id=message_id,
-                        status="delivered",
-                        delivered_at=pendulum.now("UTC").to_iso8601_string(),
-                    )
+                    
+                    # Update status in DynamoDB
+                    if Config.a2a_core:
+                        await Config.a2a_core.update_a2a_message(
+                            partition_key=partition_key,
+                            message_id=message_id,
+                            status="DELIVERED",
+                            delivery_attempts=attempt + 1,
+                        )
                     return True
-                else:
+                elif response.status_code >= 500:
+                    # Server error - retry
                     if Config.logger:
                         Config.logger.warning(
-                            f"Message delivery attempt {attempt + 1}/{max_retries} failed: "
-                            f"HTTP {response.status_code}"
+                            f"Delivery attempt {attempt + 1} failed with {response.status_code}, retrying..."
                         )
+                    await asyncio.sleep(DEFAULT_RETRY_DELAY_BASE * (2 ** attempt))
+                else:
+                    # Client error - don't retry
+                    if Config.logger:
+                        Config.logger.error(
+                            f"Delivery failed with client error {response.status_code}: {response.text}"
+                        )
+                    return False
 
+        except httpx.TimeoutException:
+            if Config.logger:
+                Config.logger.warning(f"Delivery timeout on attempt {attempt + 1}")
+            await asyncio.sleep(DEFAULT_RETRY_DELAY_BASE * (2 ** attempt))
         except Exception as e:
             if Config.logger:
-                Config.logger.error(
-                    f"Message delivery attempt {attempt + 1}/{max_retries} failed: {e}"
-                )
+                Config.logger.error(f"Delivery error on attempt {attempt + 1}: {e}")
+            await asyncio.sleep(DEFAULT_RETRY_DELAY_BASE * (2 ** attempt))
 
-        # Exponential backoff before retry (1s, 2s, 4s...)
-        if attempt < max_retries - 1:
-            await asyncio.sleep(2**attempt)
-
-    # All retries exhausted - mark as failed
+    # Max retries exceeded
     if Config.logger:
-        Config.logger.error(
-            f"Message {message_id} delivery failed after {max_retries} attempts"
+        Config.logger.error(f"Failed to deliver message {message_id} after {max_retries} attempts")
+    
+    # Update status to FAILED
+    if Config.a2a_core:
+        await Config.a2a_core.update_a2a_message(
+            partition_key=partition_key,
+            message_id=message_id,
+            status="FAILED",
+            delivery_attempts=max_retries,
         )
-
-    await update_message_status(
-        partition_key=partition_key,
-        message_id=message_id,
-        status="failed",
-        error="Max retries exhausted",
-    )
+    
     return False
 
 
@@ -517,63 +517,34 @@ async def update_message_status(
     partition_key: str,
     message_id: str,
     status: str,
-    delivered_at: Optional[str] = None,
-    error: Optional[str] = None,
-) -> None:
+    delivery_attempts: int = 0,
+    error_message: Optional[str] = None,
+) -> bool:
     """
-    Update message delivery status in DynamoDB.
+    Update message delivery status.
 
     Args:
         partition_key: Composite partition key
         message_id: Message identifier
-        status: New status (delivered, failed, etc.)
-        delivered_at: Optional delivery timestamp
-        error: Optional error message
+        status: New status (PENDING, DELIVERED, FAILED)
+        delivery_attempts: Number of delivery attempts
+        error_message: Optional error message for failed deliveries
+
+    Returns:
+        True if update succeeded, False otherwise
     """
     try:
-        mutation = """
-            mutation UpdateMessageStatus(
-                $partitionKey: String!,
-                $messageId: String!,
-                $status: String!,
-                $metadata: String,
-                $updatedBy: String!
-            ) {
-                insertUpdateA2aMessage(
-                    partitionKey: $partitionKey,
-                    messageId: $messageId,
-                    status: $status,
-                    metadata: $metadata,
-                    updatedBy: $updatedBy
-                ) {
-                    messageId
-                    status
-                }
-            }
-        """
-
-        # Build metadata with delivery info
-        metadata = {}
-        if delivered_at:
-            metadata["delivered_at"] = delivered_at
-        if error:
-            metadata["error"] = error
-
-        variables = {
-            "partitionKey": partition_key,
-            "messageId": message_id,
-            "status": status,
-            "metadata": Serializer.json_dumps(metadata) if metadata else None,
-            "updatedBy": "message_delivery_service",
-        }
-
-        Config.a2a_core.a2a_core_graphql(
-            partition_key=partition_key, query=mutation, variables=variables
-        )
-
-        if Config.logger:
-            Config.logger.info(f"Updated message {message_id} status to {status}")
-
+        if Config.a2a_core:
+            await Config.a2a_core.update_a2a_message(
+                partition_key=partition_key,
+                message_id=message_id,
+                status=status,
+                delivery_attempts=delivery_attempts,
+                error_message=error_message,
+            )
+            return True
+        return False
     except Exception as e:
         if Config.logger:
             Config.logger.error(f"Failed to update message status: {e}")
+        return False

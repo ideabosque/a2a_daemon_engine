@@ -1,19 +1,21 @@
 # A2A Daemon Engine
 
 **Package Version**: 0.0.1
-**Status**: Phases 1-5 complete; A2A SDK v1.0 migration is partially implemented with compatibility cleanup in progress
-**Last Updated**: 2026-05-03
+**Status**: Phases 1-5 complete; Phase 6-8 implementation work has landed and release validation is in progress
+**Last Updated**: 2026-05-07
 
 A dedicated Agent-to-Agent (A2A) protocol daemon engine for distributed agent communication and multi-agent orchestration following canonical A2A SDK patterns.
 
 ## Recent Updates
 
-**Post-reformation architecture is in place**, and the project is now focused on the A2A SDK v1.0 compatibility audit:
+**Post-reformation architecture is in place**, and the project is now validating the A2A SDK v1.0 compatibility and hardening work:
 - **Phase 1-3**: Core SDK alignment (AgentExecutor, TaskStore, async wrappers)
 - **Phase 4**: Architecture restructured (A2A app as primary)
 - **Phase 5**: Event-driven message delivery with retry logic
-- **Phase 6**: A2A SDK v1.0 dependency and partial code migration; initial compatibility cleanup applied, runtime verification still pending
-- **Hygiene pass (2026-05-03)**: pendulum-based UTC timestamps everywhere; bounded LRU + 100-event ring-buffer event cache; `A2A_CORS_ORIGINS` env var; Pydantic v2 `model_dump()`; 20 unused imports removed across 12 files (`pyflakes` clean)
+- **Phase 6**: A2A SDK v1.0 dependency, task-state compatibility helpers, SDK-backed JSON-RPC routing, cursor-style task listing, and JWT secret validation
+- **Phase 7**: SSE streaming components, task-event replay buffers, `INPUT_REQUIRED` / `AUTH_REQUIRED` emitters, and push-notification configuration helpers
+- **Phase 8**: Extended agent-card manager, OpenTelemetry helper module, TCK/checker utilities, cross-tenant test scaffolding, configurable CORS, Pydantic v2 `model_dump()`, and import hygiene
+- **Current focus**: run the full suite with the sibling SilvaEngine packages installed or path-loaded, wire remaining optional helpers into production paths, and confirm A2A Inspector/TCK results against a live daemon
 
 See [A2A_DEVELOPMENT_PLAN.md](docs/A2A_DEVELOPMENT_PLAN.md) for current status, gaps, and roadmap.
 
@@ -118,6 +120,8 @@ curl -X POST http://localhost:8001/ \
 #### New A2A Protocol Endpoints
 - `GET /.well-known/agent-card.json` - Agent capabilities card (auto-exposed)
 - `POST /` - Native A2A JSON-RPC endpoint
+- `GET /tasks/{task_id}/stream` - SSE task stream with `Last-Event-ID` replay support
+- `GET /.well-known/agent-card-extended.json` - Authenticated extended agent card (implementation helper available; production route wiring should be verified)
 
 #### REST API (with /rest prefix)
 - `GET /rest/health` - Health check

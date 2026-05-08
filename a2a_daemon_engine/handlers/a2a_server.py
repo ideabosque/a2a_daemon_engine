@@ -125,6 +125,14 @@ class A2AProtocolServer:
             skills=skills,
         )
 
+        # Phase 8: Initialize Extended Agent Card manager
+        from .a2a_extended_card import ExtendedAgentCardManager
+
+        self.extended_card_manager = ExtendedAgentCardManager(
+            base_card=self.agent_card,
+            logger=self.logger,
+        )
+
         # Create DynamoDB-backed task store for persistent task management
         # Falls back to InMemoryTaskStore if partition_key not available
         from .a2a_taskstore import DynamoDBA2ATaskStore
@@ -144,8 +152,24 @@ class A2AProtocolServer:
         # Create agent executor using canonical A2A SDK pattern
         from .a2a_executor import A2ADaemonExecutor
 
+        # Phase 7: Initialize SSE streaming components
+        from .a2a_sse import SSEEventQueue, StreamingTaskManager, create_sse_endpoints
+        
+        self.sse_event_queue = SSEEventQueue(
+            task_store=self.task_store,
+            max_events_per_task=100,
+            logger=self.logger,
+        )
+        self.streaming_manager = StreamingTaskManager(
+            event_queue=self.sse_event_queue,
+            logger=self.logger,
+        )
+
         self.agent_executor = A2ADaemonExecutor(
-            logger=self.logger, config=Config, task_store=self.task_store
+            logger=self.logger,
+            config=Config,
+            task_store=self.task_store,
+            streaming_manager=self.streaming_manager,
         )
 
         # Create request handler - routes A2A RPC calls to executor
@@ -181,6 +205,11 @@ class A2AProtocolServer:
             context_builder=None,  # Optional: custom context builder
             card_modifier=None,  # Optional: modify card per request
         )
+
+        # Phase 7: Register SSE streaming endpoints
+        # Add /tasks/{task_id}/stream for SubscribeToTask
+        create_sse_endpoints(self.app, self.streaming_manager)
+        self.logger.info("SSE streaming endpoints registered: /tasks/{task_id}/stream")
 
         self.logger.info(f"A2A server '{server_name}' v{server_version} initialized")
         self.logger.info(
@@ -287,10 +316,10 @@ class A2AProtocolServer:
             AgentCard object
         """
         # Define capabilities (what the agent supports)
-        # AgentCapabilities has optional boolean fields for each capability
+        # Phase 7: Enable streaming support
         capabilities = AgentCapabilities(
-            streaming=False,
-            pushNotifications=False,
+            streaming=True,  # Phase 7 Task 1: SSE streaming enabled
+            pushNotifications=True,  # Phase 7 Task 5: Push notifications enabled
         )
 
         # Define provider information
@@ -311,7 +340,7 @@ class A2AProtocolServer:
             defaultOutputModes=["text"],
             capabilities=capabilities,
             skills=skills,
-            supportsAuthenticatedExtendedCard=False,
+            supportsAuthenticatedExtendedCard=True,  # Phase 8: Extended card enabled
             provider=provider,
         )
 

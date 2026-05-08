@@ -61,13 +61,18 @@ class A2ADaemonExecutor(AgentExecutor):
     Integrates with existing handlers and DynamoDB persistence while
     following the official A2A SDK execution pattern.
 
+    Supports Phase 7 streaming features:
+    - SendStreamingMessage for SSE output
+    - Multi-turn conversations (INPUT_REQUIRED)
+    - Authentication flows (AUTH_REQUIRED)
+
     Based on:
     - HelloWorld sample: Basic execution pattern
     - Travel Planner sample: Streaming and event queue usage
     """
 
     def __init__(
-        self, logger: logging.Logger, config: Any, task_store: Optional[Any] = None
+        self, logger: logging.Logger, config: Any, task_store: Optional[Any] = None, streaming_manager: Optional[Any] = None
     ):
         """
         Initialize the daemon executor.
@@ -76,10 +81,12 @@ class A2ADaemonExecutor(AgentExecutor):
             logger: Logger instance
             config: Configuration object (Config class)
             task_store: Optional TaskStore instance for task cancellation support
+            streaming_manager: Optional StreamingTaskManager for Phase 7 SSE support
         """
         self.logger = logger
         self.config = config
         self.task_store = task_store
+        self.streaming_manager = streaming_manager
 
     async def execute(
         self, request_context: RequestContext, event_queue: EventQueue

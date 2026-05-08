@@ -18,11 +18,10 @@ Usage:
 """
 
 import argparse
-import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
 
+import pendulum
 import requests
 
 
@@ -54,8 +53,8 @@ def generate_jwt_token(secret_key: str) -> str:
         payload = {
             "sub": "test-user",
             "username": "test-user",
-            "iat": datetime.now(timezone.utc),
-            "exp": datetime.now(timezone.utc) + timedelta(hours=24),
+            "iat": pendulum.now("UTC"),
+            "exp": pendulum.now("UTC").add(hours=24),
         }
         return jwt.encode(payload, secret_key, algorithm="HS256")
     except Exception:

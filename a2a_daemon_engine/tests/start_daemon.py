@@ -179,14 +179,15 @@ def generate_jwt_token(secret_key: str, username: str = "test-user") -> str:
         JWT token string
     """
     try:
+        import pendulum
         from jose import jwt
-        import datetime
 
+        now = pendulum.now("UTC")
         payload = {
             "sub": username,
             "username": username,
-            "iat": datetime.datetime.utcnow(),
-            "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24),
+            "iat": now,
+            "exp": now.add(hours=24),
         }
 
         token = jwt.encode(payload, secret_key, algorithm="HS256")

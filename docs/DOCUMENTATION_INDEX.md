@@ -1,6 +1,6 @@
 # Documentation Index - A2A Daemon Engine
 
-**Last Updated**: May 2026
+**Last Updated**: 2026-05-07
 **Version**: 0.0.1 package; roadmap tracks post-reformation A2A v1.0 work
 
 This index provides quick navigation to all documentation based on your needs.
@@ -30,6 +30,8 @@ The repository currently contains these documentation files:
 | File | Status | Refer To |
 |------|--------|----------|
 | A2A_DEVELOPMENT_PLAN.md | Active roadmap | [Development Roadmap](A2A_DEVELOPMENT_PLAN.md#6-development-roadmap) |
+| A2A_TEST_PLAN.md | Phase 6-8 test plan | [Test Plan](A2A_TEST_PLAN.md) |
+| INTEGRATION_TEST_PLAN.md | End-to-end / integration test playbook | [Integration Test Plan](INTEGRATION_TEST_PLAN.md) |
 | a2a-protocol-analysis.md | Protocol background and suggestions | [Protocol Analysis](a2a-protocol-analysis.md) |
 | DOCUMENTATION_INDEX.md | This index | Current file |
 | README.md | Project overview and quick start | [README](../README.md) |
@@ -86,27 +88,19 @@ The repository currently contains these documentation files:
 - Status tracking in DynamoDB
 - EventQueue integration
 
-### Active / Pending
+### Active / Validation
 
 📋 **Phase 6**: A2A SDK v1.0 Upgrade & Compatibility Audit
-- Dependency declaration updated to `a2a-sdk ^1.0.0`
-- TaskStore status mapping includes uppercase/lowercase compatibility; existing data migration still pending
-- `contextId`, `createdAt`, and `lastModified` model fields added
-- Still requires runtime verification against installed SDK v1.0
-- Still requires fresh SDK v1.0 verification, legacy JSON-RPC decisions, and tests
+- Implementation work has landed: `a2a-sdk ^1.0.0`, enum compatibility helpers, SDK-backed JSON-RPC routing, cursor task listing, and JWT secret validation
+- Remaining work is live runtime validation with sibling SilvaEngine packages installed/activated and the target SDK installed
 
 📋 **Phase 7**: Streaming & Multi-Turn
-- `SendStreamingMessage` (SSE)
-- `SubscribeToTask` with `Last-Event-ID`
-- `INPUT_REQUIRED` / `AUTH_REQUIRED` state transitions
-- `PushNotificationConfig` CRUD (replace ad-hoc HTTP POST)
+- SSE streaming components, `Last-Event-ID` replay, `INPUT_REQUIRED` / `AUTH_REQUIRED` emitters, and push-notification configuration helpers have landed
+- Remaining work is end-to-end client/TCK validation and push-config route/RPC wiring confirmation
 
 📋 **Phase 8**: Production Hardening
-- `GetExtendedAgentCard` (auth-gated)
-- Configurable CORS (no wildcard with auth)
-- OpenTelemetry instrumentation
-- Comprehensive pytest suite (unit + integration)
-- A2A TCK compliance
+- Extended agent-card manager, OpenTelemetry helper module, configurable CORS, TCK/checker utilities, and cross-tenant test scaffolding have landed
+- Remaining work is production wiring verification, live A2A Inspector/TCK execution, and coverage reporting
 
 📋 **Phase 9**: Future Enhancements
 - gRPC transport
@@ -144,5 +138,5 @@ When updating documentation:
 
 ---
 
-**Last Updated**: June 2026
+**Last Updated**: 2026-05-07
 **Maintained By**: SilvaEngine Team
