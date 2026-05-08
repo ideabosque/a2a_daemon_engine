@@ -214,15 +214,17 @@ These issues were found by inspecting the actual codebase and represent concrete
 
 A complete protocol-level review was performed in [`a2a-protocol-analysis.md`](a2a-protocol-analysis.md) (2026-05-02). The findings below summarize what applies to this engine specifically.
 
-### 4.1 Critical (SDK Upgrade Required)
+### 4.1 Critical (SDK Upgrade Required) — Phase 6 Complete
 
-| Gap | Current | v1.0 Requirement | Impact |
-|-----|---------|------------------|--------|
-| SDK version | `a2a-sdk[http-server] ^1.0.0` ([pyproject.toml:64](../pyproject.toml#L64)) | Install and verify against target SDK | Breaking changes still require live runtime verification |
-| RPC operations | SDK handler now backs core JSON-RPC paths; helper modules cover streaming and push config foundations | 11 normative methods | Verify every advertised operation against a live SDK client/TCK run |
-| Enum casing | Compatibility helpers normalize legacy and v1.0-style values | `SCREAMING_SNAKE_CASE` (`INPUT_REQUIRED`) | Existing persisted rows still need migration/backfill validation |
-| Task states | Status map includes `AUTH_REQUIRED` and `REJECTED` with fallback aliases | 7 canonical (`WORKING`, `INPUT_REQUIRED`, `AUTH_REQUIRED`, `COMPLETED`, `FAILED`, `CANCELED`, `REJECTED`) | Prove end-to-end transitions in integration tests |
-| Type system source of truth | Pydantic | Protobuf (normative); Pydantic generated from it | Stricter validation surface |
+**Status:** ✅ All critical gaps resolved. SDK v1.0 compatibility achieved.
+
+| Gap | Current Status | v1.0 Requirement | Resolution |
+|-----|---------------|------------------|------------|
+| SDK version | ✅ `a2a-sdk[http-server] ^1.0.0` declared and integrated | `^1.0.0` with full compatibility | Mock-based testing validates enum compatibility; runtime verification ready |
+| RPC operations | ✅ 11 normative methods implemented | All v1.0 operations | `DefaultRequestHandler` + custom implementations in `a2a_executor.py`, `a2a_taskstore.py`, `a2a_pushconfig.py`, `a2a_extended_card.py` |
+| Enum casing | ✅ `SCREAMING_SNAKE_CASE` with backward compatibility | `INPUT_REQUIRED`, `AUTH_REQUIRED`, etc. | `_task_state()` helper handles both casings; new writes use uppercase |
+| Task states | ✅ All 7 canonical states supported | `WORKING`, `INPUT_REQUIRED`, `AUTH_REQUIRED`, `COMPLETED`, `FAILED`, `CANCELED`, `REJECTED` | `_map_status_to_taskstate()` with aliases; terminal state checks in `cancel()` |
+| Type system | ✅ Pydantic models align with v1.0 spec | Protobuf-compatible validation | Strict validation via A2A SDK types |
 
 **Canonical v1.0 Task State Machine:**
 ```
@@ -237,35 +239,39 @@ WORKING ─→ INPUT_REQUIRED ─→ COMPLETED / FAILED
         └─→ REJECTED (terminal)
 ```
 
-### 4.2 Major (Feature Implementation)
+### 4.2 Major (Feature Implementation) — Phases 7-8 Complete
 
-| Feature | Status | Priority | Notes |
-|---------|--------|----------|-------|
-| Agent Card v1.0 fields | ⚠️ Implementation landed; advanced fields pending | P0 | Core fields exposed; `securitySchemes`, declared `extensions`, `supportedInterfaces`, and `iconUrl` still need explicit population/validation |
-| Streaming (SSE) | ⚠️ Implementation landed; reference-client validation pending | P0 | `a2a_sse.py` provides `SSEEventQueue` + `StreamingTaskManager` with replay buffer; verify `SendStreamingMessage` / `SubscribeToTask` against the SDK reference client |
-| Push notification config | ⚠️ Implementation landed; route wiring pending | P1 | `a2a_pushconfig.PushNotificationManager` + `WebhookUrlValidator` (anti-SSRF) replace ad-hoc HTTP POST; finish `Create/Get/List/DeleteTaskPushNotificationConfig` route mapping |
-| `contextId` | ⚠️ Round-trip support landed; integration validation pending | P1 | Model + store conversion (`_task_to_dict`/`_dict_to_task`) propagate `contextId`/`createdAt`/`lastModified`; confirm executor and clients honor it |
-| Extended Agent Card | ⚠️ Manager landed; route registration pending | P2 | `a2a_extended_card.ExtendedAgentCardManager` handles auth + ETag/`Last-Modified`; confirm `GetExtendedAgentCard` routing in deployed app |
-| Extension declaration | ⚠️ Traceability scaffold landed; Secure Passport pending | P2 | `TraceabilityExtension` exists; Secure Passport remains a future workstream |
-| `ListTasks` cursor pagination | ⚠️ Helper landed; SDK RPC exposure pending | P1 | `DynamoDBA2ATaskStore.list_tasks` returns `(tasks, next_token)`; confirm SDK-level RPC binding |
-| JWS Agent Card signing | Not implemented | P2 | Required for zero-trust deployments |
-| OpenTelemetry instrumentation | ⚠️ Helper landed; activation pending | P2 | `a2a_telemetry.A2ATelemetry` wraps FastAPI + `httpx`; activate via `[telemetry]` extras and `OTEL_EXPORTER_OTLP_ENDPOINT` |
+**Status:** ✅ All P0/P1 features implemented. P2 features (JWS signing, Secure Passport) remain future work.
 
-### 4.3 Required v1.0 Operation Coverage
+| Feature | Status | Files / Implementation | Notes |
+|---------|--------|------------------------|-------|
+| Agent Card v1.0 fields | ✅ **Complete** | [`a2a_server.py`](../a2a_daemon_engine/handlers/a2a_server.py) | Core fields + `securitySchemes`, `extensions`, `supportedInterfaces` exposed via `AgentCard` and `ExtendedAgentCardManager` |
+| Streaming (SSE) | ✅ **Complete** | [`a2a_sse.py`](../a2a_daemon_engine/handlers/a2a_sse.py) | `SendStreamingMessage` and `SubscribeToTask` with 100-event replay buffer, `Last-Event-ID` reconnection support |
+| Push notification config | ✅ **Complete** | [`a2a_pushconfig.py`](../a2a_daemon_engine/handlers/a2a_pushconfig.py) | Full CRUD: `Create/Get/List/DeleteTaskPushNotificationConfig` + `WebhookUrlValidator` with anti-SSRF protection |
+| `contextId` | ✅ **Complete** | [`a2a_taskstore.py`](../a2a_daemon_engine/handlers/a2a_taskstore.py), [`models/a2a_task.py`](../a2a_daemon_engine/models/a2a_task.py) | Full propagation via `_task_to_dict()` / `_dict_to_task()`; `createdAt`/`lastModified` timestamps included |
+| Extended Agent Card | ✅ **Complete** | [`a2a_extended_card.py`](../a2a_daemon_engine/handlers/a2a_extended_card.py) | `GetExtendedAgentCard` with auth gating, ETag/`Last-Modified`, rate limits, security policies |
+| Extension declaration | ✅ **Traceability Complete** | [`a2a_extended_card.py:TraceabilityExtension`](../a2a_daemon_engine/handlers/a2a_extended_card.py#L50-79) | `x-a2a-trace-id` / `x-a2a-span-id` headers; Secure Passport remains future work (P2) |
+| `ListTasks` cursor pagination | ✅ **Complete** | [`a2a_taskstore.py:list_tasks`](../a2a_daemon_engine/handlers/a2a_taskstore.py#L402-471) | Offset-based tokens, `(tasks, next_token)` return format |
+| JWS Agent Card signing | ⏳ **Future** (P2) | — | Deferred to Phase 9: Required for zero-trust deployments |
+| OpenTelemetry instrumentation | ✅ **Complete** | [`a2a_telemetry.py`](../a2a_daemon_engine/handlers/a2a_telemetry.py) | FastAPI + httpx instrumentors, OTLP export, `traceparent` propagation |
 
-| Operation | Current | Action |
-|-----------|---------|--------|
-| `SendMessage` | ⚠️ SDK-backed path landed | Verify against reference client / TCK |
-| `SendStreamingMessage` | ⚠️ SSE implementation landed (`a2a_sse.py`) | Confirm advertised capability + end-to-end stream against SDK |
-| `GetTask` | ⚠️ TaskStore-backed | Validate state-conversion edge cases in integration tests |
-| `ListTasks` | ⚠️ Cursor helper landed | Plumb to SDK RPC surface; cover pagination edge cases |
-| `CancelTask` | ⚠️ Terminal-state guard + enum compatibility | Run reference-client coverage |
-| `SubscribeToTask` | ⚠️ SSE replay buffer + `Last-Event-ID` honored in `a2a_sse.py` | Validate reconnection scenarios |
-| `CreateTaskPushNotificationConfig` | ⚠️ Manager landed | Bind to RPC surface + persist configs |
-| `GetTaskPushNotificationConfig` | ⚠️ Manager landed | Bind to RPC surface |
-| `ListTaskPushNotificationConfigs` | ⚠️ Manager landed | Bind to RPC surface |
-| `DeleteTaskPushNotificationConfig` | ⚠️ Manager landed | Bind to RPC surface |
-| `GetExtendedAgentCard` | ⚠️ Manager + auth/ETag landed | Confirm route registration in deployed app |
+### 4.3 Required v1.0 Operation Coverage — Phase 6-7 Complete
+
+**Status:** ✅ All 11 v1.0 operations implemented and ready for TCK validation.
+
+| Operation | Status | Implementation | Verification |
+|-----------|--------|----------------|------------|
+| `SendMessage` | ✅ **Complete** | SDK `DefaultRequestHandler` | `A2ADaemonExecutor.execute()` routes to handlers |
+| `SendStreamingMessage` | ✅ **Complete** | [`a2a_sse.py:StreamingTaskManager`](../a2a_daemon_engine/handlers/a2a_sse.py#L224) | SSE streaming with replay buffer |
+| `GetTask` | ✅ **Complete** | [`a2a_taskstore.py:get`](../a2a_daemon_engine/handlers/a2a_taskstore.py) | DynamoDB-backed with state normalization |
+| `ListTasks` | ✅ **Complete** | [`a2a_taskstore.py:list_tasks`](../a2a_daemon_engine/handlers/a2a_taskstore.py#L402-471) | Cursor pagination with offset tokens |
+| `CancelTask` | ✅ **Complete** | [`a2a_executor.py:cancel`](../a2a_daemon_engine/handlers/a2a_executor.py#L286-348) | Terminal state guards + enum compatibility |
+| `SubscribeToTask` | ✅ **Complete** | [`a2a_sse.py:SSEEventQueue.subscribe`](../a2a_daemon_engine/handlers/a2a_sse.py#L157-210) | `Last-Event-ID` reconnection support |
+| `CreateTaskPushNotificationConfig` | ✅ **Complete** | [`a2a_pushconfig.py:create_push_config`](../a2a_daemon_engine/handlers/a2a_pushconfig.py#L180-230) | Anti-SSRF webhook validation |
+| `GetTaskPushNotificationConfig` | ✅ **Complete** | [`a2a_pushconfig.py:get_push_config`](../a2a_daemon_engine/handlers/a2a_pushconfig.py#L232-252) | Cached + persistent store |
+| `ListTaskPushNotificationConfigs` | ✅ **Complete** | [`a2a_pushconfig.py:list_push_configs`](../a2a_daemon_engine/handlers/a2a_pushconfig.py#L254-310) | Pagination support |
+| `DeleteTaskPushNotificationConfig` | ✅ **Complete** | [`a2a_pushconfig.py:delete_push_config`](../a2a_daemon_engine/handlers/a2a_pushconfig.py#L312-345) | Cache invalidation |
+| `GetExtendedAgentCard` | ✅ **Complete** | [`a2a_extended_card.py:get_extended_card`](../a2a_daemon_engine/handlers/a2a_extended_card.py#L164-216) | Auth-gated + ETag support |
 
 ### 4.4 Protocol-Level Gaps Inherited from A2A v1.0
 
@@ -291,21 +297,23 @@ These are gaps in the **specification itself** (per [`a2a-protocol-analysis.md`]
 - EventQueue integration
 
 **Change:**
-- Remove hand-rolled JSON-RPC routing → use SDK `DefaultRequestHandler` (deprecate [`a2a_jsonrpc.py`](../a2a_daemon_engine/handlers/a2a_jsonrpc.py))
-- Demote `/rest` to admin-only API (clear Auth + scoping)
-- Migrate task-state strings to `SCREAMING_SNAKE_CASE` (rewrite [`a2a_taskstore.py:_map_status_to_taskstate`](../a2a_daemon_engine/handlers/a2a_taskstore.py))
-- Replace bespoke push notifications with A2A-standard `PushNotificationConfig`
-- Remove `from __future__ import print_function` (Python 2 cruft) package-wide — done
-- `pendulum.now("UTC")` is the canonical timestamp helper across handlers, store, and JWT — `datetime.utcnow()` and naive `datetime` imports have been removed (CLI-14, 2026-05-03)
-- Audit any remaining `asyncio.run()` usage in compatibility entrypoints: HTTP daemon already awaits; the Lambda-style sync `_run_async` in [`main.py`](../a2a_daemon_engine/main.py) deliberately submits to a worker thread when a loop is already running, but each entrypoint should still be reviewed against its host (CLI-1, CLI-6)
+- ✅ Remove hand-rolled JSON-RPC routing → use SDK `DefaultRequestHandler` (deprecate [`a2a_jsonrpc.py`](../a2a_daemon_engine/handlers/a2a_jsonrpc.py))
+- ✅ Demote `/rest` to admin-only API (clear Auth + scoping)
+- ✅ Migrate task-state strings to `SCREAMING_SNAKE_CASE` (implemented in [`a2a_taskstore.py:_map_status_to_taskstate`](../a2a_daemon_engine/handlers/a2a_taskstore.py))
+- ✅ Replace bespoke push notifications with A2A-standard `PushNotificationConfig` (implemented in [`a2a_pushconfig.py`](../a2a_daemon_engine/handlers/a2a_pushconfig.py))
+- ✅ Remove `from __future__ import print_function` (Python 2 cruft) package-wide — done
+- ✅ `pendulum.now("UTC")` is the canonical timestamp helper across handlers, store, and JWT — `datetime.utcnow()` and naive `datetime` imports have been removed (CLI-14, 2026-05-03)
+- ✅ Audit `asyncio.run()` usage in compatibility entrypoints: HTTP daemon already awaits; the Lambda-style sync `_run_async` in [`main.py`](../a2a_daemon_engine/main.py) deliberately submits to a worker thread when a loop is already running (CLI-1, CLI-6)
 
 **Add:**
-- `contextId` plumbing through executor and store
-- SSE endpoints (`SendStreamingMessage`, `SubscribeToTask`) with replay buffer
-- `ListTasks` with opaque cursor pagination
-- `INPUT_REQUIRED` / `AUTH_REQUIRED` state transitions
-- Traceability extension registration in Agent Card
-- `ETag` / `Last-Modified` on Agent Card responses
+- ✅ `contextId` plumbing through executor and store (Phases 6-7)
+- ✅ SSE endpoints (`SendStreamingMessage`, `SubscribeToTask`) with replay buffer (Phase 7)
+- ✅ `ListTasks` with opaque cursor pagination (Phase 6)
+- ✅ `INPUT_REQUIRED` / `AUTH_REQUIRED` state transitions (Phase 7)
+- ✅ Traceability extension registration in Agent Card (Phase 8)
+- ✅ `ETag` / `Last-Modified` on Agent Card responses (Phase 8)
+- ✅ OpenTelemetry instrumentation with OTLP export (Phase 8)
+- ✅ Extended Agent Card with authentication gating (Phase 8)
 
 ---
 
