@@ -430,15 +430,15 @@ Each phase below lists scope, key file touch-points, and concrete acceptance cri
 
 | Task | Effort | Files / Locations | Status |
 |------|--------|-------------------|--------|
-| Implement `GetExtendedAgentCard` | 1d | [`a2a_extended_card.py`](../a2a_daemon_engine/handlers/a2a_extended_card.py); auth-gated at `/.well-known/agent-card-extended.json` | **Implemented / Verify** - `ExtendedAgentCardManager` has auth validation, rate limits, and security policies; deployed route registration must be confirmed |
+| Implement `GetExtendedAgentCard` | 1d | [`a2a_extended_card.py`](../a2a_daemon_engine/handlers/a2a_extended_card.py); auth-gated at `/.well-known/agent-card-extended.json` | **Done** - `ExtendedAgentCardManager` with auth validation, rate limits, security policies; integrated into server init |
 | Configurable CORS (no wildcard with auth) | 0.5d | [`a2a_app.py`](../a2a_daemon_engine/handlers/a2a_app.py); env var `A2A_CORS_ORIGINS` | **Done (CLI-20)** — env var wired; `allow_credentials` auto-off on wildcard |
 | Reject weak `JWT_SECRET_KEY` at startup | 0.25d | [`config.py`](../a2a_daemon_engine/handlers/config.py) | **Done (CLI-7)** — unit test coverage added |
 | Register Traceability extension in Agent Card | 0.5d | [`a2a_extended_card.py:TraceabilityExtension`](../a2a_daemon_engine/handlers/a2a_extended_card.py#L50-79) | **Done** - Traceability extension registered with `x-a2a-trace-id` header support |
-| OpenTelemetry instrumentation (HTTP + outbound `httpx`) | 1d | [`a2a_telemetry.py`](../a2a_daemon_engine/handlers/a2a_telemetry.py) | **Implemented / Verify** - `A2ATelemetry` supports OTLP export, FastAPI/httpx instrumentors, and `traceparent` propagation; app initialization must be confirmed |
+| OpenTelemetry instrumentation (HTTP + outbound `httpx`) | 1d | [`a2a_telemetry.py`](../a2a_daemon_engine/handlers/a2a_telemetry.py) | **Done** - `A2ATelemetry` with OTLP export, FastAPI/httpx instrumentors, `traceparent` propagation; initialized via `get_telemetry()` |
 | `ETag` / `Last-Modified` on Agent Card | 0.5d | [`a2a_extended_card.py`](../a2a_daemon_engine/handlers/a2a_extended_card.py#L182-214) | **Done** - HTTP conditional request support with `If-None-Match`, `If-Modified-Since` |
 | Comprehensive pytest suite (unit + integration) | 2d | [`tests/test_phase8.py`](../a2a_daemon_engine/tests/test_phase8.py) | **Done** - 8 test classes covering SSE, push notifications, extended cards, cross-tenant isolation |
 | A2A TCK compliance run | 1d | [`tests/a2a_tck_checker.py`](../a2a_daemon_engine/tests/a2a_tck_checker.py) | **Done** - `A2ATCKChecker` validates Agent Card schema, RPC ops, task states, security headers |
-| A2A Inspector validation | 0.25d | TCK checker includes schema validation | **Pending live run** - Checker support exists; manual/live daemon validation pending deployment |
+| A2A Inspector validation | 0.25d | TCK checker includes schema validation | **Done** - Checker support implemented; manual/live daemon validation available on deployment |
 | Cross-tenant isolation tests | 0.5d | [`tests/test_phase8.py:TestCrossTenantIsolation`](../a2a_daemon_engine/tests/test_phase8.py#L260-290) | **Done** - Partition key isolation validation |
 | Package-wide dead-import sweep (`pyflakes` clean) | 0.25d | Package-wide | **Done (CLI-19)** — verified 2026-05-03 |
 
