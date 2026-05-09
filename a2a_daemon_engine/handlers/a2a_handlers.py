@@ -92,19 +92,23 @@ async def handle_agent_handshake(
             if field not in agent_info:
                 raise ValueError(f"Missing required field: {field}")
 
-        # Use A2A server to handle handshake
-        if Config.a2a_server:
-            result = await Config.a2a_server.handle_handshake(
-                partition_key=partition_key, agent_data=agent_info
+        if Config.a2a_core:
+            result = await Config.a2a_core.insert_update_a2a_agent(
+                partition_key=partition_key,
+                agent_id=agent_info["agent_id"],
+                agent_name=agent_info["agent_name"],
+                capabilities=agent_info.get("capabilities"),
+                endpoint_url=agent_info.get("endpoint_url", ""),
+                metadata=agent_info.get("metadata", {}),
+                updated_by=agent_info.get("updated_by", "system"),
             )
             return {
                 "status": "success",
                 "message": "Handshake completed successfully",
                 "data": result,
             }
-        else:
-            # Fallback: A2A server not available
-            raise ValueError("A2A server not initialized")
+
+        raise ValueError("A2A core not initialized")
 
     except Exception as e:
         if Config.logger:
@@ -156,16 +160,6 @@ async def handle_task_assignment(
         # Generate task ID if not provided
         task_id = task.get("task_id") or str(uuid.uuid4())
         task["task_id"] = task_id
-
-        if not Config.a2a_core and Config.a2a_server and hasattr(Config.a2a_server, "assign_task"):
-            result = await Config.a2a_server.assign_task(
-                partition_key=partition_key, task=task
-            )
-            return {
-                "status": "success",
-                "message": "Task assigned successfully",
-                "data": result,
-            }
 
         # Determine assigned agent
         assigned_agent_id = task.get("assigned_agent_id")
@@ -264,17 +258,8 @@ async def handle_message_routing(
                 "message": "Message routed successfully",
                 "data": result,
             }
-        elif Config.a2a_server and hasattr(Config.a2a_server, "route_message"):
-            result = await Config.a2a_server.route_message(
-                partition_key=partition_key, message=message
-            )
-            return {
-                "status": "success",
-                "message": "Message routed successfully",
-                "data": result,
-            }
-        else:
-            raise ValueError("A2A core not initialized")
+
+        raise ValueError("A2A core not initialized")
 
     except Exception as e:
         if Config.logger:
@@ -369,17 +354,19 @@ async def find_best_agent(
         - Add load balancing across matching agents
     """
     try:
-        # Discover available agents
-        if Config.a2a_server:
-            agents = await Config.a2a_server.discover_agents(
-                partition_key=partition_key, filters={"status": "active"}
-            )
+        if not Config.a2a_core:
+            return None
+
+        if hasattr(Config.a2a_core, "get_a2a_agents"):
+            agents = await Config.a2a_core.get_a2a_agents(partition_key=partition_key)
         else:
             return None
 
         # Filter agents by capabilities
         matching_agents = []
         for agent in agents:
+            if agent.get("status") and agent.get("status") != "active":
+                continue
             agent_capabilities = json.loads(agent.get("capabilities", "[]"))
             if all(cap in agent_capabilities for cap in required_capabilities):
                 matching_agents.append(agent)

@@ -30,11 +30,10 @@ Environment Variables (from .env file):
     - AUTH_PROVIDER: local or cognito (default: local)
 
 API Endpoints available at:
-    - http://localhost:{port}/health
-    - http://localhost:{port}/{endpoint_id}/a2a_core_graphql
-    - http://localhost:{port}/rest/a2a/{endpoint_id}/agents/register
-    - http://localhost:{port}/rest/a2a/{endpoint_id}/tasks/create
-    - http://localhost:{port}/rest/a2a-jsonrpc
+    - http://localhost:{port}/.well-known/agent-card.json
+    - http://localhost:{port}/
+    - http://localhost:{port}/rest/health
+    - http://localhost:{port}/rest/{endpoint_id}/a2a_core_graphql
 """
 
 import argparse
@@ -134,32 +133,23 @@ def print_startup_info(config: dict) -> None:
     print(f"  Transport:     {config['transport']}")
     print(f"  Auth Provider: {config['auth_provider']}")
     print("\nAvailable Endpoints:")
-    print(f"  Health Check:  http://localhost:{port}/health")
-    print(f"  Server Info:   http://localhost:{port}/{endpoint_id}")
-    print(f"  GraphQL:       http://localhost:{port}/{endpoint_id}/a2a_core_graphql")
-    print(f"  REST API Base: http://localhost:{port}/rest/a2a/{endpoint_id}")
-    print(f"  JSON-RPC:      http://localhost:{port}/rest/a2a-jsonrpc")
+    print(f"  Agent Card:    http://localhost:{port}/.well-known/agent-card.json")
+    print(f"  JSON-RPC:      http://localhost:{port}/")
+    print(f"  Health Check:  http://localhost:{port}/rest/health")
+    print(f"  Server Info:   http://localhost:{port}/rest/{endpoint_id}")
+    print(f"  GraphQL:       http://localhost:{port}/rest/{endpoint_id}/a2a_core_graphql")
     print("\nExample curl commands:")
     print("  # Health check")
-    print(f"  curl http://localhost:{port}/health")
+    print(f"  curl http://localhost:{port}/rest/health")
     print("\n  # GraphQL ping")
-    print(f"  curl -X POST http://localhost:{port}/{endpoint_id}/a2a_core_graphql \\\n")
+    print(f"  curl -X POST http://localhost:{port}/rest/{endpoint_id}/a2a_core_graphql \\\n")
     print('    -H "Content-Type: application/json" \\\n')
     print('    -d \'{"query": "query { ping }"}\'')
-    print("\n  # Register agent (requires JWT token)")
-    print(
-        f"  curl -X POST http://localhost:{port}/rest/a2a/{endpoint_id}/agents/register \\\n"
-    )
-    print('    -H "Content-Type: application/json" \\\n')
-    print('    -H "Authorization: Bearer <your-jwt-token>" \\\n')
-    print(
-        '    -d \'{"agent_id": "agent-001", "agent_name": "Test Agent", "capabilities": ["text"], "endpoint_url": "http://localhost:9001"}\''
-    )
     print("\n  # JSON-RPC")
-    print(f"  curl -X POST http://localhost:{port}/rest/a2a-jsonrpc \\\n")
+    print(f"  curl -X POST http://localhost:{port}/ \\\n")
     print('    -H "Content-Type: application/json" \\\n')
     print(
-        '    -d \'{"jsonrpc": "2.0", "method": "agent.getCard", "params": {}, "id": 1}\''
+        '    -d \'{"jsonrpc": "2.0", "method": "message/send", "params": {"message": {"role": "user", "parts": [{"text": "hello"}]}}, "id": 1}\''
     )
     print("\n" + "=" * 80)
     print("Press Ctrl+C to stop the server")

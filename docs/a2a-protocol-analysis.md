@@ -267,7 +267,7 @@ The a2a_daemon_engine is currently undergoing Phase 6 migration to A2A SDK v1.0.
 
 | ID | Task | Location | Priority |
 |----|------|----------|----------|
-| CLI-6 | `a2a_jsonrpc.py:213` still uses `asyncio.run()` in sync wrapper | `a2a_jsonrpc.py:213` | Medium |
+| CLI-6 | Removed with the hand-rolled JSON-RPC module; serverless JSON-RPC now dispatches through `A2ADaemonEngine.a2a()` and the SDK bridge | `main.py`, `a2a_jsonrpc_bridge.py` | Resolved |
 | CLI-8 | TaskState enum still uses lowercase v0.3 names (`input_required`) - needs SCREAMING_SNAKE_CASE | `a2a_taskstore.py:206-208` | **High** |
 | CLI-9 | Missing `AUTH_REQUIRED` and `REJECTED` states in status map | `a2a_taskstore.py:_map_status_to_taskstate` | **High** |
 | CLI-11 | `list_tasks()` now returns `(tasks, next_token)` using offset tokens over the current GraphQL wrapper; SDK RPC exposure and integration tests remain | `a2a_taskstore.py:352+` | Medium |
@@ -296,7 +296,7 @@ The a2a_daemon_engine is currently undergoing Phase 6 migration to A2A SDK v1.0.
 - EventQueue integration
 
 **Change:**
-- Remove hand-rolled JSON-RPC routing → use SDK `DefaultRequestHandler` (deprecate `a2a_jsonrpc.py`)
+- Remove hand-rolled JSON-RPC routing → use SDK `DefaultRequestHandler`
 - Demote `/rest` to admin-only API (clear Auth + scoping)
 - Migrate task-state strings to `SCREAMING_SNAKE_CASE` (rewrite `a2a_taskstore.py:_map_status_to_taskstate`)
 - Replace bespoke push notifications with A2A-standard `PushNotificationConfig`

@@ -38,8 +38,8 @@ class TestHandleAgentHandshake:
         with patch(
             "a2a_daemon_engine.handlers.a2a_handlers.Config"
         ) as mock_config:
-            mock_config.a2a_server = AsyncMock()
-            mock_config.a2a_server.handle_handshake = AsyncMock(
+            mock_config.a2a_core = AsyncMock()
+            mock_config.a2a_core.insert_update_a2a_agent = AsyncMock(
                 return_value={"id": "test-agent-001", "status": "registered"}
             )
             mock_config.logger = Mock()
@@ -50,7 +50,7 @@ class TestHandleAgentHandshake:
 
             assert result["status"] == "success"
             assert "data" in result
-            mock_config.a2a_server.handle_handshake.assert_called_once()
+            mock_config.a2a_core.insert_update_a2a_agent.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handshake_missing_required_fields(self):
@@ -65,12 +65,12 @@ class TestHandleAgentHandshake:
         assert "Missing required field" in result["message"]
 
     @pytest.mark.asyncio
-    async def test_handshake_server_not_initialized(self, valid_agent_info):
-        """Test handshake when A2A server is not initialized."""
+    async def test_handshake_core_not_initialized(self, valid_agent_info):
+        """Test handshake when A2A core is not initialized."""
         with patch(
             "a2a_daemon_engine.handlers.a2a_handlers.Config"
         ) as mock_config:
-            mock_config.a2a_server = None
+            mock_config.a2a_core = None
             mock_config.logger = Mock()
 
             result = await handle_agent_handshake(
@@ -78,7 +78,7 @@ class TestHandleAgentHandshake:
             )
 
             assert result["status"] == "error"
-            assert "A2A server not initialized" in result["message"]
+            assert "A2A core not initialized" in result["message"]
 
 
 class TestHandleTaskAssignment:

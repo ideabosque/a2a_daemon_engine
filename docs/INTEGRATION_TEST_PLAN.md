@@ -37,7 +37,7 @@ This document outlines the comprehensive integration testing strategy for the A2
 | TC-002 | `GetTask` | Returns complete task state with artifacts | P0 |
 | TC-003 | `ListTasks` | Returns paginated list with cursor | P0 |
 | TC-004 | `CancelTask` | Task transitions to CANCELED state | P0 |
-| TC-005 | `agent.getCard` | Returns valid Agent Card JSON | P0 |
+| TC-005 | `GET /.well-known/agent-card.json` | Returns valid Agent Card JSON | P0 |
 
 ### 2.2 Multi-Tenancy & Data Isolation
 

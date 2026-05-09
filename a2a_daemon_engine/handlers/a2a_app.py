@@ -1,13 +1,10 @@
 #!/usr/bin/python
 """
-FastAPI Application for A2A Daemon Engine
+Auxiliary FastAPI application for A2A Daemon Engine operations.
 
-Provides HTTP/REST API endpoints for A2A operations including:
-- Health check
-- GraphQL endpoint
-- Partition key extraction and assembly
-- A2A protocol REST API
-- A2A JSON-RPC 2.0 protocol
+The A2A protocol surface is provided by the SDK Starlette app at the HTTP
+root. This FastAPI app is mounted under /rest and exposes only operational
+endpoints that are outside the A2A protocol binding.
 """
 
 import os
@@ -18,31 +15,9 @@ import pendulum
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 from silvaengine_utility.serializer import Serializer
 
-from .a2a_handlers import (
-    handle_agent_handshake,
-    handle_message_routing,
-    handle_state_sync,
-    handle_task_assignment,
-)
 from .config import Config
-
-# Import A2A SDK types for JSON-RPC handling
-try:
-    from a2a.server.context import ServerCallContext
-    from a2a.types import CancelTaskRequest, GetTaskRequest, SendMessageRequest
-
-    HAS_A2A_SDK = True
-except ImportError:
-    HAS_A2A_SDK = False
-
-from .a2a_sdk_compat import (
-    build_jsonrpc_sdk_request,
-    jsonrpc_error_response,
-    jsonrpc_response_from_sdk,
-)
 
 __author__ = "SilvaEngine Team"
 
@@ -55,7 +30,7 @@ def _resolve_cors_origins() -> list[str]:
     - Comma-separated list of origins (e.g. "https://a.example,https://b.example")
     - "*" enables wildcard origin (development only; incompatible with credentials)
     - Empty / unset defaults to "*" with allow_credentials disabled, matching the
-      historical wide-open behavior while flagging it for production hardening.
+      previous development behavior while flagging it for production hardening.
     """
     raw = os.getenv("A2A_CORS_ORIGINS", "").strip()
     if not raw:
@@ -66,16 +41,7 @@ def _resolve_cors_origins() -> list[str]:
 
 def _get_partition_key(endpoint_id: str, request: Request) -> tuple[str, str | None]:
     """
-    Construct partition key from endpoint_id and optional part_id.
-
-    Args:
-        endpoint_id: Platform/infrastructure partition (from URL path)
-        request: FastAPI request object
-
-    Returns:
-        Tuple of (partition_key, part_id)
-        - partition_key: Composite key "endpoint_id#part_id" or just endpoint_id
-        - part_id: Business partition from Part-ID header (None if not provided)
+    Construct partition key from endpoint_id and optional Part-ID header.
     """
     part_id = request.headers.get("Part-ID")
     if part_id:
@@ -86,29 +52,18 @@ def _get_partition_key(endpoint_id: str, request: Request) -> tuple[str, str | N
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Manage application lifespan - startup and shutdown events.
-
-    Startup:
-    - Log server startup
-
-    Shutdown:
-    - Log shutdown
-    - Cleanup HTTP client if using Cognito auth
+    Manage application lifespan.
     """
-    # Startup
     if Config.logger:
-        Config.logger.info("Starting up A2A Server...")
+        Config.logger.info("Starting A2A operations app...")
 
     yield
 
-    # Shutdown
     if Config.logger:
-        Config.logger.info("Shutting down application, cleaning up resources...")
+        Config.logger.info("Shutting down A2A operations app...")
 
-    # Cleanup HTTP client if using Cognito auth
     if Config.auth_provider == "cognito":
         try:
-            # Import here to avoid circular dependency
             from .jwt_cognito import cleanup_http_client
 
             await cleanup_http_client()
@@ -117,11 +72,8 @@ async def lifespan(app: FastAPI):
                 Config.logger.error(f"Error cleaning up HTTP client: {e}")
 
 
-# Create FastAPI application
-app = FastAPI(title="A2A Daemon Engine", lifespan=lifespan)
+app = FastAPI(title="A2A Daemon Operations API", lifespan=lifespan)
 
-# Configure CORS via env var. Wildcard origin is incompatible with allow_credentials;
-# disable credentials when "*" is used so browsers do not silently drop responses.
 _cors_origins = _resolve_cors_origins()
 _allow_credentials = _cors_origins != ["*"]
 app.add_middleware(
@@ -136,17 +88,6 @@ app.add_middleware(
 def current_user(request: Request) -> dict:
     """
     Get current authenticated user from request state.
-
-    This dependency is set by FlexJWTMiddleware after successful authentication.
-
-    Args:
-        request: FastAPI request
-
-    Returns:
-        User claims dictionary from JWT token
-
-    Raises:
-        HTTPException: If user is not authenticated
     """
     user = getattr(request.state, "user", None)
     if not user:
@@ -156,21 +97,13 @@ def current_user(request: Request) -> dict:
 
 @app.get("/me")
 def me(user: dict = Depends(current_user)) -> dict:
-    """
-    Get current user information.
-
-    Args:
-        user: Current authenticated user (injected by dependency)
-
-    Returns:
-        User claims from JWT token
-    """
+    """Get current user information."""
     return user
 
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint"""
+async def health_check() -> dict[str, str]:
+    """Health check endpoint."""
     return {
         "status": "healthy",
         "timestamp": pendulum.now("UTC").to_iso8601_string(),
@@ -178,22 +111,9 @@ async def health_check():
 
 
 @app.post("/{endpoint_id}/a2a_core_graphql")
-async def a2a_core_graphql(endpoint_id: str, request: Request) -> dict:
+async def a2a_core_graphql(endpoint_id: str, request: Request) -> dict[str, Any]:
     """
     Handle GraphQL queries with automatic partition_key assembly.
-
-    This is the main GraphQL endpoint. It:
-    1. Extracts endpoint_id from URL path
-    2. Extracts part_id from Part-ID header (optional)
-    3. Assembles partition_key = "endpoint_id#part_id"
-    4. Passes to Config.a2a_core for execution
-
-    Args:
-        endpoint_id: Platform partition identifier (from URL)
-        request: FastAPI request with GraphQL query in body
-
-    Returns:
-        GraphQL execution result
     """
     params = await request.json()
     partition_key, part_id = _get_partition_key(endpoint_id, request)
@@ -201,106 +121,55 @@ async def a2a_core_graphql(endpoint_id: str, request: Request) -> dict:
     params["partition_key"] = partition_key
     params["endpoint_id"] = endpoint_id
 
-    # Execute the GraphQL query
     response = Config.a2a_core.a2a_core_graphql(**params)
-    result = Serializer.json_loads(response.get("body", response))
-
-    return result
+    return Serializer.json_loads(response.get("body", response))
 
 
-@app.get("/{endpoint_id}")
-async def root(endpoint_id: str, request: Request) -> dict:
+@app.get("/{endpoint_id}", response_model=None)
+async def root(endpoint_id: str, request: Request) -> dict[str, Any] | JSONResponse:
     """
-    Get endpoint information including A2A SDK status.
-
-    Args:
-        endpoint_id: Platform partition identifier
-        request: FastAPI request
-
-    Returns:
-        Server information including partition_key and A2A SDK details
+    Get operational endpoint information.
     """
     try:
         partition_key, part_id = _get_partition_key(endpoint_id, request)
 
-        # Base response
-        response = {
+        response: dict[str, Any] = {
             "server": "A2A Daemon Engine",
             "version": "0.0.1",
             "endpoint_id": endpoint_id,
             "part_id": part_id,
             "partition_key": partition_key,
             "timestamp": pendulum.now("UTC").to_iso8601_string(),
+            "a2a_protocol": {
+                "agent_card": "/.well-known/agent-card.json",
+                "json_rpc_endpoint": "/",
+                "protocol_version": "1.0.0",
+            },
+            "operations_api": {
+                "base_path": "/rest",
+                "endpoints": {
+                    "health": "/rest/health",
+                    "me": "/rest/me",
+                    "graphql": f"/rest/{endpoint_id}/a2a_core_graphql",
+                },
+                "authentication": f"Bearer token required where configured (provider: {Config.auth_provider})",
+            },
         }
 
-        # Add A2A SDK information if available
         if Config.a2a_server:
-            try:
-                # Get A2A SDK agent card info
-                agent_card = Config.a2a_server.agent_card
-
-                response["a2a_sdk"] = {
-                    "enabled": True,
-                    "agent_name": agent_card.name,
-                    "agent_version": agent_card.version,
-                    "agent_url": agent_card.url,
-                    "capabilities": {
-                        "streaming": (
-                            agent_card.capabilities.streaming
-                            if agent_card.capabilities
-                            else False
-                        ),
-                        "push_notifications": (
-                            agent_card.capabilities.pushNotifications
-                            if agent_card.capabilities
-                            else False
-                        ),
-                    },
-                    "input_modes": agent_card.defaultInputModes,
-                    "output_modes": agent_card.defaultOutputModes,
-                    "skills": (
-                        [skill.name for skill in agent_card.skills]
-                        if agent_card.skills
-                        else []
-                    ),
-                    "status": "mounted",
-                    "json_rpc_endpoint": "/a2a-sdk",
-                    "note": "A2A SDK JSON-RPC server mounted and accessible at /a2a-sdk",
-                }
-            except Exception as e:
-                if Config.logger:
-                    Config.logger.warning(f"Error getting A2A SDK info: {e}")
-                response["a2a_sdk"] = {
-                    "enabled": True,
-                    "status": "initialized",
-                    "error": str(e),
-                }
+            agent_card = Config.a2a_server.agent_card
+            response["a2a_sdk"] = {
+                "enabled": True,
+                "agent_name": agent_card.name,
+                "agent_version": agent_card.version,
+                "agent_url": agent_card.url,
+                "status": "mounted",
+            }
         else:
             response["a2a_sdk"] = {
                 "enabled": False,
-                "note": "A2A SDK not initialized. Install with: pip install -e .[a2a]",
+                "note": "A2A SDK server is not initialized",
             }
-
-        # Add available REST endpoints
-        response["rest_api"] = {
-            "base_path": f"/a2a/{endpoint_id}",
-            "endpoints": {
-                "agents": {
-                    "register": f"/a2a/{endpoint_id}/agents/register",
-                    "handshake": f"/a2a/{endpoint_id}/agents/{{agent_id}}/handshake",
-                    "status": f"/a2a/{endpoint_id}/agents/{{agent_id}}/status",
-                    "list": f"/a2a/{endpoint_id}/agents",
-                    "message": f"/a2a/{endpoint_id}/agents/{{agent_id}}/message",
-                    "sync_state": f"/a2a/{endpoint_id}/agents/{{agent_id}}/sync-state",
-                },
-                "tasks": {
-                    "create": f"/a2a/{endpoint_id}/tasks/create",
-                },
-                "graphql": f"/{endpoint_id}/a2a_core_graphql",
-                "a2a_sdk_json_rpc": "/a2a-sdk" if Config.a2a_server else None,
-            },
-            "authentication": f"Bearer token required (provider: {Config.auth_provider})",
-        }
 
         return response
 
@@ -308,559 +177,3 @@ async def root(endpoint_id: str, request: Request) -> dict:
         if Config.logger:
             Config.logger.error(f"Error getting endpoint info for {endpoint_id}: {e}")
         return JSONResponse(status_code=500, content={"error": "Internal server error"})
-
-
-# ========================================
-# Request/Response Models for REST API
-# ========================================
-
-
-class AgentRegistration(BaseModel):
-    """Agent registration request"""
-
-    agent_id: str = Field(..., description="Agent identifier")
-    agent_name: str = Field(..., description="Human-readable agent name")
-    capabilities: list[str] = Field(..., description="List of agent capabilities")
-    endpoint_url: str = Field(..., description="Agent communication endpoint")
-    metadata: dict[str, Any] | None = Field(
-        default={}, description="Additional metadata"
-    )
-
-
-class TaskCreation(BaseModel):
-    """Task creation request"""
-
-    task_id: str | None = Field(
-        None, description="Task identifier (auto-generated if not provided)"
-    )
-    task_type: str = Field(..., description="Type of task")
-    assigned_agent_id: str | None = Field(
-        None, description="Agent to assign task to"
-    )
-    priority: str = Field(
-        default="medium", description="Task priority (low/medium/high/critical)"
-    )
-    input_data: dict[str, Any] = Field(..., description="Task input data")
-    required_capabilities: list[str] | None = Field(
-        default=[], description="Required agent capabilities"
-    )
-
-
-class MessageData(BaseModel):
-    """Message routing request"""
-
-    message_id: str | None = Field(
-        None, description="Message identifier (auto-generated if not provided)"
-    )
-    from_agent_id: str = Field(..., description="Source agent identifier")
-    to_agent_id: str = Field(..., description="Destination agent identifier")
-    message_type: str = Field(..., description="Type of message")
-    payload: dict[str, Any] = Field(..., description="Message payload")
-
-
-class StateSync(BaseModel):
-    """State synchronization request"""
-
-    agent_id: str = Field(..., description="Agent identifier")
-    state_data: dict[str, Any] = Field(..., description="State data to synchronize")
-
-
-# ========================================
-# A2A Protocol REST Endpoints
-# ========================================
-
-
-@app.post("/a2a/{endpoint_id}/agents/register")
-async def register_agent(
-    endpoint_id: str,
-    request: Request,
-    agent_data: AgentRegistration,
-    user: dict = Depends(current_user),
-) -> dict[str, Any]:
-    """
-    Register a new agent in the A2A network.
-
-    This is the first step for an agent to join the network. The agent
-    provides its capabilities and endpoint for communication.
-
-    Args:
-        endpoint_id: Platform partition identifier
-        request: FastAPI request
-        agent_data: Agent registration data
-        user: Authenticated user (from JWT)
-
-    Returns:
-        Registration result with agent details
-    """
-    # TODO: COORDINATION - Coordinate REST and JSON-RPC agent registration
-    # Currently two agent registration paths exist:
-    # 1. This REST endpoint: POST /a2a/{endpoint_id}/agents/register
-    # 2. A2A SDK JSON-RPC: handle_handshake() via A2AServer
-    #
-    # Ensure both paths:
-    # - Store agent data consistently in DynamoDB
-    # - Update agent registries in both systems
-    # - Maintain agent availability for task assignment
-    #
-    # Consider: Should REST endpoints delegate to A2A SDK methods
-    # or should both be independent interfaces to the same storage layer?
-
-    partition_key, part_id = _get_partition_key(endpoint_id, request)
-
-    try:
-        agent_info = agent_data.model_dump()
-        agent_info["updated_by"] = user.get("username", "unknown")
-
-        result = await handle_agent_handshake(
-            partition_key=partition_key, agent_info=agent_info
-        )
-
-        return {
-            "timestamp": pendulum.now("UTC").to_iso8601_string(),
-            "endpoint_id": endpoint_id,
-            "partition_key": partition_key,
-            **result,
-        }
-
-    except Exception as e:
-        if Config.logger:
-            Config.logger.error(f"Agent registration failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/a2a/{endpoint_id}/agents/{agent_id}/handshake")
-async def agent_handshake(
-    endpoint_id: str,
-    agent_id: str,
-    request: Request,
-    agent_data: AgentRegistration,
-    user: dict = Depends(current_user),
-) -> dict[str, Any]:
-    """
-    Perform agent handshake and capability negotiation.
-
-    Args:
-        endpoint_id: Platform partition identifier
-        agent_id: Agent identifier
-        request: FastAPI request
-        agent_data: Agent data for handshake
-        user: Authenticated user
-
-    Returns:
-        Handshake result with negotiated capabilities
-    """
-    partition_key, part_id = _get_partition_key(endpoint_id, request)
-
-    try:
-        agent_info = agent_data.model_dump()
-        agent_info["agent_id"] = agent_id
-        agent_info["updated_by"] = user.get("username", "unknown")
-
-        result = await handle_agent_handshake(
-            partition_key=partition_key, agent_info=agent_info
-        )
-
-        return {
-            "timestamp": pendulum.now("UTC").to_iso8601_string(),
-            "endpoint_id": endpoint_id,
-            "partition_key": partition_key,
-            **result,
-        }
-
-    except Exception as e:
-        if Config.logger:
-            Config.logger.error(f"Handshake failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/a2a/{endpoint_id}/tasks/create")
-async def create_task(
-    endpoint_id: str,
-    request: Request,
-    task_data: TaskCreation,
-    user: dict = Depends(current_user),
-) -> dict[str, Any]:
-    """
-    Create and assign a task to an agent.
-
-    If no agent is specified, the system will find the best agent
-    based on task requirements and agent capabilities.
-
-    Args:
-        endpoint_id: Platform partition identifier
-        request: FastAPI request
-        task_data: Task creation data
-        user: Authenticated user
-
-    Returns:
-        Task creation and assignment result
-    """
-    # Task execution is handled through the A2A message/send executor path.
-    # This REST endpoint only creates/assigns the task and returns immediately.
-
-    partition_key, part_id = _get_partition_key(endpoint_id, request)
-
-    try:
-        task = task_data.model_dump()
-        task["updated_by"] = user.get("username", "unknown")
-
-        result = await handle_task_assignment(partition_key=partition_key, task=task)
-
-        return {
-            "timestamp": pendulum.now("UTC").to_iso8601_string(),
-            "endpoint_id": endpoint_id,
-            "partition_key": partition_key,
-            **result,
-        }
-
-    except Exception as e:
-        if Config.logger:
-            Config.logger.error(f"Task creation failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/a2a/{endpoint_id}/agents/{agent_id}/status")
-async def get_agent_status(
-    endpoint_id: str,
-    agent_id: str,
-    request: Request,
-    user: dict = Depends(current_user),
-) -> dict[str, Any]:
-    """
-    Get current status of a specific agent.
-
-    Args:
-        endpoint_id: Platform partition identifier
-        agent_id: Agent identifier
-        request: FastAPI request
-        user: Authenticated user
-
-    Returns:
-        Agent status and details
-    """
-    partition_key, part_id = _get_partition_key(endpoint_id, request)
-
-    try:
-        query = """
-            query GetAgent($partitionKey: String!, $agentId: String!) {
-                a2aAgent(partitionKey: $partitionKey, agentId: $agentId) {
-                    partitionKey
-                    agentId
-                    agentName
-                    capabilities
-                    endpointUrl
-                    status
-                    metadata
-                    createdAt
-                    updatedAt
-                }
-            }
-        """
-
-        result = Config.a2a_core.a2a_core_graphql(
-            partition_key=partition_key,
-            query=query,
-            variables={"partitionKey": partition_key, "agentId": agent_id},
-        )
-
-        data = Serializer.json_loads(result.get("body", result))
-
-        if "errors" in data:
-            raise HTTPException(status_code=404, detail="Agent not found")
-
-        return {
-            "timestamp": pendulum.now("UTC").to_iso8601_string(),
-            "endpoint_id": endpoint_id,
-            "partition_key": partition_key,
-            "agent": data.get("data", {}).get("a2aAgent"),
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        if Config.logger:
-            Config.logger.error(f"Failed to get agent status: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/a2a/{endpoint_id}/agents/{agent_id}/message")
-async def send_message(
-    endpoint_id: str,
-    agent_id: str,
-    request: Request,
-    message: MessageData,
-    user: dict = Depends(current_user),
-) -> dict[str, Any]:
-    """
-    Send a message to a specific agent.
-
-    Args:
-        endpoint_id: Platform partition identifier
-        agent_id: Destination agent identifier
-        request: FastAPI request
-        message: Message data
-        user: Authenticated user
-
-    Returns:
-        Message routing result
-    """
-    # TODO: NEXT STEP - Implement actual message delivery to agents
-    # Currently handle_message_routing() only stores messages in DynamoDB.
-    # Need to implement actual delivery:
-    # 1. Get target agent's endpoint_url from database
-    # 2. Send HTTP POST to agent's endpoint with message payload
-    # 3. Handle delivery failures (retry, dead letter queue)
-    # 4. Update message status based on delivery result
-    # 5. Track delivery_at timestamp
-    # See: a2a_handlers.py handle_message_routing() for routing logic
-    # See: a2a_server.py route_message() for A2A SDK integration
-
-    partition_key, part_id = _get_partition_key(endpoint_id, request)
-
-    try:
-        message_data = message.model_dump()
-        message_data["to_agent_id"] = agent_id
-
-        result = await handle_message_routing(
-            partition_key=partition_key, message=message_data
-        )
-
-        return {
-            "timestamp": pendulum.now("UTC").to_iso8601_string(),
-            "endpoint_id": endpoint_id,
-            "partition_key": partition_key,
-            **result,
-        }
-
-    except Exception as e:
-        if Config.logger:
-            Config.logger.error(f"Message send failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/a2a/{endpoint_id}/agents/{agent_id}/sync-state")
-async def sync_agent_state(
-    endpoint_id: str,
-    agent_id: str,
-    request: Request,
-    state: StateSync,
-    user: dict = Depends(current_user),
-) -> dict[str, Any]:
-    """
-    Synchronize agent state.
-
-    Args:
-        endpoint_id: Platform partition identifier
-        agent_id: Agent identifier
-        request: FastAPI request
-        state: State synchronization data
-        user: Authenticated user
-
-    Returns:
-        State synchronization result
-    """
-    partition_key, part_id = _get_partition_key(endpoint_id, request)
-
-    try:
-        state_data = state.model_dump()
-        state_data["agent_id"] = agent_id
-        state_data["updated_by"] = user.get("username", "unknown")
-
-        result = await handle_state_sync(partition_key=partition_key, state=state_data)
-
-        return {
-            "timestamp": pendulum.now("UTC").to_iso8601_string(),
-            "endpoint_id": endpoint_id,
-            "partition_key": partition_key,
-            **result,
-        }
-
-    except Exception as e:
-        if Config.logger:
-            Config.logger.error(f"State sync failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/a2a/{endpoint_id}/agents")
-async def list_agents(
-    endpoint_id: str,
-    request: Request,
-    status: str | None = None,
-    user: dict = Depends(current_user),
-) -> dict[str, Any]:
-    """
-    List all agents in the network.
-
-    Args:
-        endpoint_id: Platform partition identifier
-        request: FastAPI request
-        status: Filter by agent status (optional)
-        user: Authenticated user
-
-    Returns:
-        List of agents
-    """
-    partition_key, part_id = _get_partition_key(endpoint_id, request)
-
-    try:
-        # Discover agents via A2A server
-        if Config.a2a_server:
-            filters = {"status": status} if status else {}
-            agents = await Config.a2a_server.discover_agents(
-                partition_key=partition_key, filters=filters
-            )
-        else:
-            agents = []
-
-        return {
-            "timestamp": pendulum.now("UTC").to_iso8601_string(),
-            "endpoint_id": endpoint_id,
-            "partition_key": partition_key,
-            "count": len(agents),
-            "agents": agents,
-        }
-
-    except Exception as e:
-        if Config.logger:
-            Config.logger.error(f"Failed to list agents: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ========================================
-# A2A JSON-RPC 2.0 Protocol Endpoint (Migrated to SDK)
-# ========================================
-
-
-@app.post("/a2a-jsonrpc")
-async def handle_a2a_jsonrpc(request: Request) -> JSONResponse:
-    """
-    Handle A2A JSON-RPC 2.0 requests via HTTP POST using SDK DefaultRequestHandler.
-
-    This endpoint delegates to the A2A SDK's DefaultRequestHandler for proper
-    protocol compliance. It replaces the deprecated a2a_jsonrpc.py implementation.
-
-    Example Request:
-        POST /a2a-jsonrpc
-        {
-            "jsonrpc": "2.0",
-            "method": "message/send",
-            "params": {"message": {...}},
-            "id": 1
-        }
-
-    Example Response:
-        {
-            "jsonrpc": "2.0",
-            "result": {"id": "task-123", "status": "SUBMITTED", ...},
-            "id": 1
-        }
-    """
-    try:
-        # Parse JSON-RPC request
-        message = await request.json()
-
-        # Check if A2A SDK is available
-        if not Config.a2a_server or not HAS_A2A_SDK:
-            return JSONResponse(
-                content=jsonrpc_error_response(
-                    -32603,
-                    "A2A SDK not available. Install with: pip install -e .[a2a]",
-                    message.get("id"),
-                ),
-                status_code=503,
-            )
-
-        # Extract partition_key from headers
-        partition_key = request.headers.get("Part-ID") or request.headers.get(
-            "X-Partition-Key"
-        )
-        context_state = {"partition_key": partition_key}
-        request_metadata = message.get("params", {}).get("metadata", {})
-        if isinstance(request_metadata, dict):
-            context_state.update(request_metadata)
-
-        # Build request context
-        context = ServerCallContext(
-            state=context_state,
-        )
-
-        # Get SDK request handler
-        request_handler = Config.a2a_server.request_handler
-
-        # Route based on method
-        method = message.get("method", "")
-
-        if method == "message/send":
-            # Use SDK handler for message/send across Pydantic/protobuf SDKs.
-            send_request = build_jsonrpc_sdk_request(SendMessageRequest, message)
-            response = await request_handler.on_message_send(send_request, context)
-            return JSONResponse(
-                content=jsonrpc_response_from_sdk(response, message.get("id"))
-            )
-        elif method == "tasks/get":
-            get_request = build_jsonrpc_sdk_request(GetTaskRequest, message)
-            response = await request_handler.on_get_task(get_request, context)
-            return JSONResponse(
-                content=jsonrpc_response_from_sdk(response, message.get("id"))
-            )
-        elif method == "tasks/cancel":
-            cancel_request = build_jsonrpc_sdk_request(CancelTaskRequest, message)
-            response = await request_handler.on_cancel_task(cancel_request, context)
-            return JSONResponse(
-                content=jsonrpc_response_from_sdk(response, message.get("id"))
-            )
-        else:
-            # Method not found
-            return JSONResponse(
-                content=jsonrpc_error_response(
-                    -32601,
-                    f"Method not found: {method}",
-                    message.get("id"),
-                ),
-                status_code=200,
-            )
-
-    except Exception as e:
-        if Config.logger:
-            Config.logger.error(f"Error handling JSON-RPC request: {e}", exc_info=True)
-
-        return JSONResponse(
-            content=jsonrpc_error_response(
-                -32603,
-                "Internal error",
-                message.get("id") if "message" in locals() else None,
-                str(e),
-            ),
-            status_code=500,
-        )
-
-
-@app.get("/a2a-jsonrpc")
-async def get_a2a_jsonrpc_info() -> dict[str, Any]:
-    """
-    GET endpoint to show JSON-RPC endpoint info.
-
-    Returns information about the JSON-RPC endpoint and available methods.
-    """
-    return {
-        "protocol": "JSON-RPC 2.0",
-        "endpoint": "/a2a-jsonrpc",
-        "description": "A2A Protocol JSON-RPC interface",
-        "methods": {
-            "message/send": "Send a message to the agent",
-            "tasks/get": "Get task state by task ID",
-            "tasks/cancel": "Cancel a running task",
-        },
-        "example_request": {
-            "jsonrpc": "2.0",
-            "method": "message/send",
-            "params": {
-                "message": {
-                    "role": "user",
-                    "parts": [{"type": "text", "text": "Hello"}],
-                }
-            },
-            "id": 1,
-        },
-        "note": "This endpoint uses the same handler as serverless a2a() function and /a2a-sdk mounted app",
-    }

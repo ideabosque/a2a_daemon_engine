@@ -31,64 +31,26 @@ except ImportError:
 __author__ = "SilvaEngine Team"
 
 
-_TASK_STATE_ALIASES = {
-    "submitted": "TASK_STATE_SUBMITTED",
-    "working": "TASK_STATE_WORKING",
-    "completed": "TASK_STATE_COMPLETED",
-    "failed": "TASK_STATE_FAILED",
-    "canceled": "TASK_STATE_CANCELED",
-    "input_required": "TASK_STATE_INPUT_REQUIRED",
-    "rejected": "TASK_STATE_REJECTED",
-    "auth_required": "TASK_STATE_AUTH_REQUIRED",
-}
-
-
-def _install_task_state_aliases() -> None:
-    """Expose older enum-style attributes when the SDK uses protobuf wrappers."""
-    if not hasattr(TaskState, "Value"):
-        return
-
-    for alias, proto_name in _TASK_STATE_ALIASES.items():
-        if not hasattr(TaskState, alias):
-            try:
-                setattr(TaskState, alias, TaskState.Value(proto_name))
-            except ValueError:
-                continue
-
-
-_install_task_state_aliases()
-
-
 def _task_state(name: str) -> TaskState:
     """
-    Resolve TaskState members across SDK enum casing differences.
-
-    A2A v1.0 uses SCREAMING_SNAKE_CASE enum members, while older SDK samples used
-    lowercase names. Prefer the v1.0 member and fall back for compatibility.
+    Resolve an A2A v1 TaskState member by SCREAMING_SNAKE_CASE name.
     """
+    if not name.isupper():
+        raise AttributeError(f"TaskState names must be v1 uppercase: {name}")
     if hasattr(TaskState, name):
         return getattr(TaskState, name)
-    if hasattr(TaskState, name.lower()):
-        return getattr(TaskState, name.lower())
     if hasattr(TaskState, "Value"):
         proto_name = f"TASK_STATE_{name.upper()}"
         try:
             return TaskState.Value(proto_name)
         except ValueError:
             pass
-    aliases = {
-        "AUTH_REQUIRED": "INPUT_REQUIRED",
-        "REJECTED": "FAILED",
-        "SUBMITTED": "WORKING",
-        "UNKNOWN": "WORKING",
-    }
-    alias = aliases.get(name)
-    if alias:
-        if hasattr(TaskState, alias):
-            return getattr(TaskState, alias)
-        if hasattr(TaskState, alias.lower()):
-            return getattr(TaskState, alias.lower())
     raise AttributeError(f"TaskState has no member for {name}")
+
+
+def _task_state_storage_name(name: str) -> str:
+    """Return the storage string for a v1 TaskState name."""
+    return name.upper()
 
 
 def _status_update_event(state: TaskState, **kwargs: Any) -> TaskStatusUpdateEvent:
@@ -128,6 +90,23 @@ def _context_get(request_context: RequestContext, key: str, default: Any = None)
     if isinstance(state, dict):
         return state.get(key, default)
 
+    return default
+
+
+def _truthy_option(value: Any) -> bool:
+    """Interpret boolean-like request options from JSON clients."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def _dict_get_any(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
+    """Return the first present key from a dict."""
+    for key in keys:
+        if key in data:
+            return data[key]
     return default
 
 
@@ -257,18 +236,30 @@ class A2ADaemonExecutor(AgentExecutor):
 
         # Extract task data from context
         task_data = _context_get(request_context, "task_data", {})
+        if not isinstance(task_data, dict):
+            task_data = {}
         user_input = request_context.get_user_input()
 
         # Add user input to task description if provided
         if user_input and "description" not in task_data:
             task_data["description"] = user_input
 
-        if task_data.get("dry_run"):
-            task_id = task_data.get("task_id", "dry-run-task")
+        dry_run = _truthy_option(
+            _dict_get_any(task_data, "dry_run", "dryRun", "dry-run", default=False)
+        )
+        if dry_run:
+            task_id = _dict_get_any(task_data, "task_id", "taskId", "id", default="dry-run-task")
+            description = _dict_get_any(
+                task_data,
+                "description",
+                "input",
+                "prompt",
+                default=user_input or "No description provided",
+            )
             await _emit_event(
                 event_queue,
                 _agent_text_message(
-                    f"Task {task_id} executed in dry-run mode: {task_data['description']}"
+                    f"Task {task_id} executed in dry-run mode: {description}"
                 ),
             )
             return
@@ -419,7 +410,7 @@ class A2ADaemonExecutor(AgentExecutor):
                 current_state = (
                     self.task_store._map_status_to_taskstate(current_state)
                     if hasattr(self.task_store, "_map_status_to_taskstate")
-                    else TaskState(current_state)
+                    else _task_state(current_state)
                 )
 
             if current_state in terminal_states:
@@ -429,7 +420,7 @@ class A2ADaemonExecutor(AgentExecutor):
                 return
 
             if isinstance(task, dict):
-                task["status"] = _task_state("CANCELED").value
+                task["status"] = _task_state_storage_name("CANCELED")
             else:
                 task.status = TaskStatus(state=_task_state("CANCELED"))
 

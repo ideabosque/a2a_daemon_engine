@@ -323,7 +323,7 @@ def main():
             "name": "A2A Daemon Engine",
             "version": "1.0.0",
             "url": "http://localhost:8001/",
-            "protocolVersion": "0.3.0",
+            "protocolVersion": "1.0.0",
             "description": "Agent-to-Agent protocol daemon for distributed agent communication",
             "capabilities": {
                 "streaming": False,

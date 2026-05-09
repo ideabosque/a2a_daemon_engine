@@ -178,51 +178,6 @@ def part_id():
     return "test-part"
 
 
-# A2A-specific fixtures
-@pytest.fixture(scope="function")
-def sample_agent_data(test_data, endpoint_id):
-    """Return sample A2A agent registration data."""
-    return {
-        "action": "register_agent",
-        "agent_id": "test-agent-001",
-        "agent_name": "Test Agent",
-        "capabilities": ["text-processing", "data-analysis"],
-        "endpoint_url": "http://localhost:8000",
-    }
-
-
-@pytest.fixture(scope="function")
-def sample_task_data(test_data):
-    """Return sample task assignment data."""
-    return {
-        "action": "assign_task",
-        "task_type": "analysis",
-        "input_data": {"text": "analyze this data"},
-    }
-
-
-@pytest.fixture(scope="function")
-def sample_message_data(test_data):
-    """Return sample message routing data."""
-    return {
-        "action": "route_message",
-        "from_agent_id": "agent-A",
-        "to_agent_id": "agent-B",
-        "message_type": "text",
-        "payload": {"content": "hello from agent A"},
-    }
-
-
-@pytest.fixture(scope="function")
-def sample_execute_task_data(test_data):
-    """Return sample task execution data."""
-    return {
-        "action": "execute_task",
-        "task_id": "task-123",
-        "input_data": {"start": True},
-    }
-
-
 # ============================================================================
 # CUSTOM PYTEST HOOKS
 # ============================================================================
@@ -305,9 +260,9 @@ def pytest_collection_modifyitems(
     Filter collected tests based on --test-function and --test-markers options.
 
     This allows flexible test execution like:
-        pytest --test-function test_register_agent
+        pytest --test-function test_graphql_ping
         pytest --test-markers "integration,a2a"
-        AI_A2A_TEST_FUNCTION=test_register_agent pytest
+        AI_A2A_TEST_FUNCTION=test_graphql_ping pytest
     """
     target = config.getoption("--test-function")
     marker_filter_raw = config.getoption("--test-markers")

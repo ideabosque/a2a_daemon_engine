@@ -21,33 +21,17 @@ from a2a_daemon_engine.handlers.a2a_executor import (
 
 
 class TestTaskStateHelper:
-    """Test the _task_state compatibility helper."""
-
-    def test_task_state_lowercase(self):
-        """Test actual lowercase enum members from SDK."""
-        assert _task_state("working") == TaskState.working
-        assert _task_state("completed") == TaskState.completed
-        assert _task_state("failed") == TaskState.failed
-        assert _task_state("canceled") == TaskState.canceled
+    """Test the v1 TaskState helper."""
 
     def test_task_state_uppercase_v1_0_style(self):
-        """Test v1.0 SCREAMING_SNAKE_CASE style (helper should map)."""
-        # Helper tries uppercase first, falls back to lowercase
-        result = _task_state("WORKING")
-        assert result == TaskState.working
+        """Test v1.0 SCREAMING_SNAKE_CASE style."""
+        assert _task_state("WORKING") == TaskState.Value("TASK_STATE_WORKING")
+        assert _task_state("COMPLETED") == TaskState.Value("TASK_STATE_COMPLETED")
 
-        result = _task_state("COMPLETED")
-        assert result == TaskState.completed
-
-    def test_task_state_aliases(self):
-        """Test alias mappings for special states."""
-        # AUTH_REQUIRED exists as its own state in the SDK
-        result = _task_state("AUTH_REQUIRED")
-        assert result == TaskState.auth_required or result == TaskState.input_required
-
-        # REJECTED exists as its own state in the SDK
-        result = _task_state("REJECTED")
-        assert result == TaskState.rejected or result == TaskState.failed
+    def test_task_state_v1_states(self):
+        """Test v1 states without downgrade aliases."""
+        assert _task_state("AUTH_REQUIRED") == TaskState.Value("TASK_STATE_AUTH_REQUIRED")
+        assert _task_state("REJECTED") == TaskState.Value("TASK_STATE_REJECTED")
 
     def test_task_state_invalid(self):
         """Test that invalid states raise AttributeError."""
@@ -123,9 +107,9 @@ class TestA2ADaemonExecutor:
     @pytest.mark.asyncio
     async def test_cancel_already_terminal_state(self, executor):
         """Test cancel when task is already in terminal state."""
-        # Setup mock task in terminal state (using lowercase as per SDK)
+        # Setup mock task in terminal state.
         mock_task = Mock()
-        mock_task.status = TaskState.completed
+        mock_task.status = _task_state("COMPLETED")
 
         executor.task_store = Mock()
         executor.task_store.get = AsyncMock(return_value=mock_task)
@@ -140,9 +124,9 @@ class TestA2ADaemonExecutor:
     @pytest.mark.asyncio
     async def test_cancel_valid_task(self, executor):
         """Test cancel on a valid cancellable task."""
-        # Setup mock task in working state (lowercase as per SDK)
+        # Setup mock task in working state.
         mock_task = Mock()
-        mock_task.status = TaskState.working
+        mock_task.status = _task_state("WORKING")
         mock_task.id = "test-task-id"
 
         executor.task_store = Mock()
@@ -155,23 +139,19 @@ class TestA2ADaemonExecutor:
         # Should save the task with updated status
         executor.task_store.save.assert_called_once()
 
-    def test_task_state_helper_with_various_casings(self):
-        """Test task state helper handles various enum casings."""
+    def test_task_state_helper_rejects_lowercase(self):
+        """Test task state helper rejects pre-v1 lowercase names."""
         test_cases = [
-            ("working", TaskState.working),
-            ("completed", TaskState.completed),
-            ("failed", TaskState.failed),
-            ("canceled", TaskState.canceled),
-            ("input_required", TaskState.input_required),
+            "working",
+            "completed",
+            "failed",
+            "canceled",
+            "input_required",
         ]
 
-        for input_name, expected in test_cases:
-            try:
-                result = _task_state(input_name)
-                assert result == expected, f"Failed for {input_name}: got {result}, expected {expected}"
-            except AttributeError as e:
-                # Some members might not exist in all SDK versions
-                pytest.skip(f"SDK version doesn't have {input_name}: {e}")
+        for input_name in test_cases:
+            with pytest.raises(AttributeError):
+                _task_state(input_name)
 
     def test_executor_with_task_store(self, logger, config):
         """Test executor initialization with task store."""
@@ -198,7 +178,7 @@ class TestExecutorIntegration:
         # Setup task store mock
         task_store = Mock()
         task_store.get = AsyncMock(return_value=Mock(
-            status=TaskState.working,
+            status=_task_state("WORKING"),
             id="test-task"
         ))
         task_store.save = AsyncMock()

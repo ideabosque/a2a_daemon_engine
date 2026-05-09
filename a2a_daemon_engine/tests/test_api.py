@@ -257,7 +257,7 @@ def test_jsonrpc_no_auth(base_url: str) -> bool:
     print_section("TEST: JSON-RPC (No Auth)")
 
     status, data = make_request(
-        f"{base_url}/rest/a2a-jsonrpc",
+        f"{base_url}/",
         method="POST",
         data={"jsonrpc": "2.0", "method": "ping", "params": {}, "id": 1},
         headers={"Content-Type": "application/json"},
@@ -326,7 +326,7 @@ def test_message_send(base_url: str, token: str) -> bool:
         return True
 
     status, data = make_request(
-        f"{base_url}/rest/a2a-jsonrpc",
+        f"{base_url}/",
         method="POST",
         data={
             "jsonrpc": "2.0",
@@ -369,7 +369,7 @@ def test_task_execution_request(base_url: str, token: str) -> bool:
 
     task_id = "test-task-exec-001"
     status, data = make_request(
-        f"{base_url}/rest/a2a-jsonrpc",
+        f"{base_url}/",
         method="POST",
         data={
             "jsonrpc": "2.0",

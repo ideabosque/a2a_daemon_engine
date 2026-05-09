@@ -17,9 +17,11 @@ This implementation provides:
 import logging
 from typing import Any
 
-# A2A SDK is now required (version >=0.3.0 with http-server extras)
+# A2A SDK v1 is required with http-server extras.
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
+from a2a.server.routes.common import DefaultServerCallContextBuilder
+from a2a.server.routes.jsonrpc_dispatcher import JsonRpcDispatcher
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
     AgentCapabilities,
@@ -28,8 +30,9 @@ from a2a.types import (
     AgentProvider,
     AgentSkill,
 )
-from silvaengine_utility.serializer import Serializer
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from .config import Config
 
@@ -39,6 +42,124 @@ __author__ = "SilvaEngine Team"
 # Now using canonical A2ADaemonExecutor from a2a_executor.py
 
 
+class A2AServerCallContextBuilder(DefaultServerCallContextBuilder):
+    """
+    Add daemon-specific request state to the SDK server call context.
+
+    The SDK dispatcher parses and caches the JSON body before context creation,
+    so request._json is available here for metadata-driven execution modes.
+    """
+
+    def build(self, request: Any) -> Any:
+        context = super().build(request)
+
+        headers = context.state.get("headers", {})
+        partition_key = headers.get("x-partition-key") or headers.get("part-id")
+        if partition_key:
+            context.state["partition_key"] = partition_key
+
+        body = getattr(request, "_json", None)
+        self.update_state_from_body(context.state, body)
+
+        return context
+
+    def build_from_body(self, request: Any, body: Any) -> Any:
+        """Build context from an already parsed JSON-RPC request body."""
+        context = super().build(request)
+
+        headers = context.state.get("headers", {})
+        partition_key = headers.get("x-partition-key") or headers.get("part-id")
+        if partition_key:
+            context.state["partition_key"] = partition_key
+
+        self.update_state_from_body(context.state, body)
+        return context
+
+    @staticmethod
+    def update_state_from_body(state: dict[str, Any], body: Any) -> None:
+        """Extract daemon execution metadata from supported JSON-RPC shapes."""
+        if not isinstance(body, dict):
+            return
+
+        params = body.get("params", {})
+        if not isinstance(params, dict):
+            return
+
+        metadata: dict[str, Any] = {}
+        request_metadata = params.get("metadata", {})
+        if isinstance(request_metadata, dict):
+            metadata.update(request_metadata)
+
+        message = params.get("message", {})
+        if isinstance(message, dict):
+            message_metadata = message.get("metadata", {})
+            if isinstance(message_metadata, dict):
+                metadata.update(message_metadata)
+
+        if "operation" in params and "operation" not in metadata:
+            metadata["operation"] = params["operation"]
+        if "task_data" in params and "task_data" not in metadata:
+            metadata["task_data"] = params["task_data"]
+        if "taskData" in params and "task_data" not in metadata:
+            metadata["task_data"] = params["taskData"]
+
+        if isinstance(metadata, dict):
+            state.update(metadata)
+
+
+class A2AJsonRpcCompatibilityEndpoint:
+    """Handle legacy slash-style A2A JSON-RPC methods on the v1 SDK app."""
+
+    def __init__(self, request_handler: Any) -> None:
+        self.request_handler = request_handler
+        self.context_builder = A2AServerCallContextBuilder()
+        self.dispatcher = JsonRpcDispatcher(
+            request_handler=request_handler,
+            context_builder=self.context_builder,
+            enable_v0_3_compat=True,
+        )
+
+    async def handle_requests(self, request: Any) -> Any:
+        body = await request.json()
+        method = body.get("method") if isinstance(body, dict) else None
+
+        if method not in {"message/send", "tasks/get", "tasks/cancel"}:
+            return await self.dispatcher.handle_requests(request)
+
+        try:
+            from a2a.types import CancelTaskRequest, GetTaskRequest, SendMessageRequest
+
+            from .a2a_jsonrpc_bridge import (
+                build_jsonrpc_sdk_request,
+                jsonrpc_error_response,
+                jsonrpc_response_from_sdk,
+            )
+
+            context = self.context_builder.build_from_body(request, body)
+            request_id = body.get("id")
+
+            if method == "message/send":
+                sdk_request = build_jsonrpc_sdk_request(SendMessageRequest, body)
+                response = await self.request_handler.on_message_send(
+                    sdk_request, context
+                )
+            elif method == "tasks/get":
+                sdk_request = build_jsonrpc_sdk_request(GetTaskRequest, body)
+                response = await self.request_handler.on_get_task(sdk_request, context)
+            else:
+                sdk_request = build_jsonrpc_sdk_request(CancelTaskRequest, body)
+                response = await self.request_handler.on_cancel_task(
+                    sdk_request, context
+                )
+
+            return JSONResponse(jsonrpc_response_from_sdk(response, request_id))
+        except Exception as e:
+            return JSONResponse(
+                jsonrpc_error_response(-32603, str(e), body.get("id")),
+                status_code=200,
+            )
+
+
 class A2AProtocolServer:
     """
     A2A Protocol Server
@@ -46,7 +167,7 @@ class A2AProtocolServer:
     Manages agent-to-agent communication using the A2A protocol SDK.
     Provides both:
     1. A2A-compliant HTTP/REST server (via a2a.server.routes)
-    2. Compatibility methods for existing daemon handlers
+    2. Integration with existing GraphQL-based storage layer
 
     Based on the official A2A SDK pattern:
     https://a2a-protocol.org/latest/tutorials/python/5-start-server/
@@ -201,13 +322,19 @@ class A2AProtocolServer:
         #
         # See docs/A2A_GAP_ANALYSIS.md section 2.1 for details.
 
+        jsonrpc_endpoint = A2AJsonRpcCompatibilityEndpoint(self.request_handler)
         self.app = Starlette(
             routes=[
                 *create_agent_card_routes(self.agent_card),
+                Route(
+                    path="/",
+                    endpoint=jsonrpc_endpoint.handle_requests,
+                    methods=["POST"],
+                ),
                 *create_jsonrpc_routes(
                     request_handler=self.request_handler,
-                    rpc_url="/",
-                    context_builder=None,
+                    rpc_url="/v1",
+                    context_builder=A2AServerCallContextBuilder(),
                     enable_v0_3_compat=True,
                 ),
             ]
@@ -344,7 +471,7 @@ class A2AProtocolServer:
                 AgentInterface(
                     url=url,
                     protocol_binding="JSONRPC",
-                    protocol_version="0.3.0",
+                    protocol_version="1.0.0",
                 )
             ],
             version=version,
@@ -384,395 +511,3 @@ class A2AProtocolServer:
         if self.app and hasattr(self.app, "routes"):
             return self.app.routes()
         return []
-
-    # =========================================================================
-    # Compatibility Methods for Existing Daemon Handlers
-    # =========================================================================
-    # These methods provide backward compatibility with the existing
-    # DynamoDB-based handler system while the migration to full A2A SDK
-    # integration is in progress.
-    # =========================================================================
-
-    async def handle_handshake(
-        self, partition_key: str, agent_data: dict[str, Any]
-    ) -> dict[str, Any]:
-        """
-        Handle agent handshake/registration (compatibility method).
-
-        This is a compatibility bridge for the existing a2a_handlers.
-        In a full A2A SDK integration, handshakes would be handled through
-        the DefaultRequestHandler and AgentExecutor pattern.
-
-        Args:
-            partition_key: Composite partition key (endpoint_id#part_id)
-            agent_data: Agent registration data
-
-        Returns:
-            Handshake response
-        """
-        self.logger.info(f"Agent handshake: {agent_data.get('agent_id')}")
-
-        # IMPLEMENTATION: Store agent registration in DynamoDB via GraphQL
-        # Split partition_key back to endpoint_id and part_id
-        parts = partition_key.split("#")
-        endpoint_id = parts[0]
-        part_id = parts[1] if len(parts) > 1 else ""
-
-        mutation = """
-            mutation RegisterAgent(
-                $partitionKey: String!,
-                $agentId: String!,
-                $endpointId: String!,
-                $partId: String!,
-                $agentName: String!,
-                $capabilities: String!,
-                $endpointUrl: String!,
-                $status: String!,
-                $metadata: String,
-                $updatedBy: String!
-            ) {
-                insertUpdateA2aAgent(
-                    partitionKey: $partitionKey,
-                    agentId: $agentId,
-                    endpointId: $endpointId,
-                    partId: $partId,
-                    agentName: $agentName,
-                    capabilities: $capabilities,
-                    endpointUrl: $endpointUrl,
-                    status: $status,
-                    metadata: $metadata,
-                    updatedBy: $updatedBy
-                ) {
-                    partitionKey
-                    agentId
-                    agentName
-                    capabilities
-                    endpointUrl
-                    status
-                }
-            }
-        """
-
-        # Prepare capabilities as JSON string
-        capabilities = agent_data.get("capabilities", [])
-        capabilities_str = (
-            Serializer.json_dumps(capabilities)
-            if isinstance(capabilities, list)
-            else capabilities
-        )
-
-        # Prepare metadata as JSON string
-        metadata = agent_data.get("metadata", {})
-        metadata_str = (
-            Serializer.json_dumps(metadata)
-            if isinstance(metadata, dict)
-            else (metadata or "{}")
-        )
-
-        variables = {
-            "partitionKey": partition_key,
-            "agentId": agent_data["agent_id"],
-            "endpointId": endpoint_id,
-            "partId": part_id,
-            "agentName": agent_data["agent_name"],
-            "capabilities": capabilities_str,
-            "endpointUrl": agent_data.get("endpoint_url", ""),
-            "status": agent_data.get("status", "active"),
-            "metadata": metadata_str,
-            "updatedBy": agent_data.get("updated_by", "a2a_server"),
-        }
-
-        try:
-            result = Config.a2a_core.a2a_core_graphql(
-                partition_key=partition_key, query=mutation, variables=variables
-            )
-
-            data = Serializer.json_loads(result.get("body", result))
-
-            if "errors" in data:
-                self.logger.error(f"GraphQL errors: {data['errors']}")
-                raise ValueError(f"Failed to register agent: {data['errors']}")
-
-            agent = data.get("data", {}).get("insertUpdateA2aAgent", {})
-
-            return {
-                "status": "registered",
-                "agent_id": agent.get("agentId"),
-                "agent_name": agent.get("agentName"),
-                "capabilities": Serializer.json_loads(agent.get("capabilities", "[]")),
-                "endpoint_url": agent.get("endpointUrl"),
-                "message": "Agent registered successfully",
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to store agent: {e}")
-            raise
-
-    async def assign_task(
-        self, partition_key: str, task_data: dict[str, Any]
-    ) -> dict[str, Any]:
-        """
-        Assign a task to an agent (compatibility method).
-
-        Args:
-            partition_key: Composite partition key
-            task_data: Task assignment data
-
-        Returns:
-            Task assignment response
-        """
-        self.logger.info(f"Task assignment: {task_data.get('task_id')}")
-
-        # IMPLEMENTATION: Store task in DynamoDB via GraphQL
-        parts = partition_key.split("#")
-        endpoint_id = parts[0]
-        part_id = parts[1] if len(parts) > 1 else ""
-
-        mutation = """
-            mutation AssignTask(
-                $partitionKey: String!,
-                $taskId: String!,
-                $endpointId: String!,
-                $partId: String!,
-                $taskType: String!,
-                $assignedAgentId: String,
-                $status: String!,
-                $priority: String!,
-                $inputData: String,
-                $updatedBy: String!
-            ) {
-                insertUpdateA2aTask(
-                    partitionKey: $partitionKey,
-                    taskId: $taskId,
-                    endpointId: $endpointId,
-                    partId: $partId,
-                    taskType: $taskType,
-                    assignedAgentId: $assignedAgentId,
-                    status: $status,
-                    priority: $priority,
-                    inputData: $inputData,
-                    updatedBy: $updatedBy
-                ) {
-                    partitionKey
-                    taskId
-                    taskType
-                    assignedAgentId
-                    status
-                    priority
-                }
-            }
-        """
-
-        # Prepare input_data as JSON string
-        input_data = task_data.get("input_data", {})
-        input_data_str = (
-            Serializer.json_dumps(input_data)
-            if isinstance(input_data, dict)
-            else (input_data or "{}")
-        )
-
-        variables = {
-            "partitionKey": partition_key,
-            "taskId": task_data["task_id"],
-            "endpointId": endpoint_id,
-            "partId": part_id,
-            "taskType": task_data["task_type"],
-            "assignedAgentId": task_data.get("assigned_agent_id"),
-            "status": task_data.get("status", "SUBMITTED").upper(),
-            "priority": task_data.get("priority", "medium"),
-            "inputData": input_data_str,
-            "updatedBy": task_data.get("updated_by", "a2a_server"),
-        }
-
-        try:
-            result = Config.a2a_core.a2a_core_graphql(
-                partition_key=partition_key, query=mutation, variables=variables
-            )
-
-            data = Serializer.json_loads(result.get("body", result))
-
-            if "errors" in data:
-                self.logger.error(f"GraphQL errors: {data['errors']}")
-                raise ValueError(f"Failed to assign task: {data['errors']}")
-
-            task = data.get("data", {}).get("insertUpdateA2aTask", {})
-
-            # Task execution is handled through the A2A message/send executor path.
-
-            return {
-                "status": "assigned",
-                "task_id": task.get("taskId"),
-                "task_type": task.get("taskType"),
-                "assigned_agent_id": task.get("assignedAgentId"),
-                "priority": task.get("priority"),
-                "message": "Task assigned successfully",
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to store task: {e}")
-            raise
-
-    async def route_message(
-        self, partition_key: str, message_data: dict[str, Any]
-    ) -> dict[str, Any]:
-        """
-        Route a message between agents (compatibility method).
-
-        Args:
-            partition_key: Composite partition key
-            message_data: Message routing data
-
-        Returns:
-            Message routing response
-        """
-        from_agent = message_data.get("from_agent_id")
-        to_agent = message_data.get("to_agent_id")
-        self.logger.info(f"Message routing: {from_agent} -> {to_agent}")
-
-        # IMPLEMENTATION: Store message in DynamoDB via GraphQL
-        parts = partition_key.split("#")
-        endpoint_id = parts[0]
-        part_id = parts[1] if len(parts) > 1 else ""
-
-        mutation = """
-            mutation RouteMessage(
-                $partitionKey: String!,
-                $messageId: String!,
-                $endpointId: String!,
-                $partId: String!,
-                $fromAgentId: String!,
-                $toAgentId: String!,
-                $messageType: String!,
-                $payload: String!,
-                $status: String!
-            ) {
-                insertUpdateA2aMessage(
-                    partitionKey: $partitionKey,
-                    messageId: $messageId,
-                    endpointId: $endpointId,
-                    partId: $partId,
-                    fromAgentId: $fromAgentId,
-                    toAgentId: $toAgentId,
-                    messageType: $messageType,
-                    payload: $payload,
-                    status: $status
-                ) {
-                    partitionKey
-                    messageId
-                    fromAgentId
-                    toAgentId
-                    messageType
-                    status
-                }
-            }
-        """
-
-        # Prepare payload as JSON string
-        payload = message_data.get("payload", {})
-        payload_str = (
-            Serializer.json_dumps(payload)
-            if isinstance(payload, dict)
-            else (payload or "{}")
-        )
-
-        variables = {
-            "partitionKey": partition_key,
-            "messageId": message_data["message_id"],
-            "endpointId": endpoint_id,
-            "partId": part_id,
-            "fromAgentId": from_agent,
-            "toAgentId": to_agent,
-            "messageType": message_data["message_type"],
-            "payload": payload_str,
-            "status": message_data.get("status", "sent"),
-        }
-
-        try:
-            result = Config.a2a_core.a2a_core_graphql(
-                partition_key=partition_key, query=mutation, variables=variables
-            )
-
-            data = Serializer.json_loads(result.get("body", result))
-
-            if "errors" in data:
-                self.logger.error(f"GraphQL errors: {data['errors']}")
-                raise ValueError(f"Failed to route message: {data['errors']}")
-
-            message = data.get("data", {}).get("insertUpdateA2aMessage", {})
-
-            # TODO: Deliver message to recipient agent
-            # Options:
-            # 1. HTTP POST: Send to agent endpoint_url (requires get_agent() to fetch endpoint)
-            # 2. Webhook: Trigger agent webhook if configured
-            # 3. Queue: Push to agent-specific message queue
-            # After delivery, update status to "delivered"
-
-            return {
-                "status": "routed",
-                "message_id": message.get("messageId"),
-                "from_agent_id": message.get("fromAgentId"),
-                "to_agent_id": message.get("toAgentId"),
-                "message_status": message.get("status"),
-                "message": "Message routed successfully",
-            }
-
-        except Exception as e:
-            self.logger.error(f"Failed to store message: {e}")
-            raise
-
-    async def discover_agents(
-        self, partition_key: str, filters: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]:
-        """
-        Discover available agents in the network (compatibility method).
-
-        Args:
-            partition_key: Composite partition key
-            filters: Optional filters (e.g., {"status": "active"})
-
-        Returns:
-            List of agent dictionaries
-        """
-        try:
-            # Query agents from GraphQL
-            query = """
-                query ListAgents($partitionKey: String!) {
-                    a2aAgentList(partitionKey: $partitionKey) {
-                        a2aAgentList {
-                            partitionKey
-                            agentId
-                            agentName
-                            capabilities
-                            endpointUrl
-                            status
-                            metadata
-                        }
-                    }
-                }
-            """
-
-            result = Config.a2a_core.a2a_core_graphql(
-                partition_key=partition_key,
-                query=query,
-                variables={"partitionKey": partition_key},
-            )
-
-            # Extract agents from result
-            agents = []
-            if result and isinstance(result, dict):
-                data = result.get("data", {})
-                agent_list_data = data.get("a2aAgentList", {})
-                agents = agent_list_data.get("a2aAgentList", [])
-
-            # Apply filters if provided
-            if filters and agents:
-                status_filter = filters.get("status")
-                if status_filter:
-                    agents = [a for a in agents if a.get("status") == status_filter]
-
-            self.logger.info(f"Discovered {len(agents)} agents")
-            return agents
-
-        except Exception as e:
-            self.logger.error(f"Agent discovery failed: {e}")
-            return []

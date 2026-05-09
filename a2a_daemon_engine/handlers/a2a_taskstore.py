@@ -38,28 +38,29 @@ _DEFAULT_MAX_EVENTS_PER_TASK = 100
 
 def _task_state(name: str) -> TaskState:
     """
-    Resolve TaskState members across SDK enum casing differences.
-
-    A2A v1.0 uses SCREAMING_SNAKE_CASE enum members, while older SDK samples used
-    lowercase names. Prefer the v1.0 member and fall back for compatibility.
+    Resolve an A2A v1 TaskState member by SCREAMING_SNAKE_CASE name.
     """
+    if not name.isupper():
+        raise AttributeError(f"TaskState names must be v1 uppercase: {name}")
     if hasattr(TaskState, name):
         return getattr(TaskState, name)
-    if hasattr(TaskState, name.lower()):
-        return getattr(TaskState, name.lower())
-    aliases = {
-        "AUTH_REQUIRED": "INPUT_REQUIRED",
-        "REJECTED": "FAILED",
-        "SUBMITTED": "WORKING",
-        "UNKNOWN": "WORKING",
-    }
-    alias = aliases.get(name)
-    if alias:
-        if hasattr(TaskState, alias):
-            return getattr(TaskState, alias)
-        if hasattr(TaskState, alias.lower()):
-            return getattr(TaskState, alias.lower())
+    if hasattr(TaskState, "Value"):
+        proto_name = f"TASK_STATE_{name}"
+        try:
+            return TaskState.Value(proto_name)
+        except ValueError:
+            pass
     raise AttributeError(f"TaskState has no member for {name}")
+
+
+def _task_state_name(state: Any) -> str:
+    """Return a storage-safe v1 TaskState name."""
+    if hasattr(state, "value"):
+        return str(state.value).upper()
+    if hasattr(TaskState, "Name") and isinstance(state, int):
+        return TaskState.Name(state).removeprefix("TASK_STATE_")
+    raw = str(state)
+    return raw.removeprefix("TASK_STATE_").upper()
 
 
 class DynamoDBA2ATaskStore(TaskStore):
@@ -331,14 +332,9 @@ class DynamoDBA2ATaskStore(TaskStore):
             if isinstance(status_value, TaskStatus):
                 # Extract state from TaskStatus - v1.0 SCREAMING_SNAKE_CASE
                 state = status_value.state
-                if hasattr(state, "value"):
-                    return state.value
-                return str(state).upper()
-            elif isinstance(status_value, TaskState):
-                # Direct TaskState enum - v1.0 SCREAMING_SNAKE_CASE
-                if hasattr(status_value, "value"):
-                    return status_value.value
-                return str(status_value).upper()
+                return _task_state_name(state)
+            elif isinstance(status_value, int):
+                return _task_state_name(status_value)
             elif isinstance(status_value, str):
                 # String status - should already be SCREAMING_SNAKE_CASE
                 return status_value.upper()

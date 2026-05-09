@@ -207,188 +207,100 @@ class A2ADaemonEngine:
 
     def a2a(self, **params: dict[str, Any]) -> dict[str, Any]:
         """
-        Unified A2A Protocol Handler.
-
-        Routes to different A2A operations based on the 'action' parameter:
-        - register_agent: Register an agent in the A2A network
-        - assign_task: Assign a task to an agent
-        - route_message: Route a message between agents
+        Serverless A2A JSON-RPC protocol handler.
 
         Args:
-            **params: Operation parameters including:
-
-                **REST-style (action-based)**:
-                - action: Operation type (register_agent/assign_task/route_message)
-
-                **A2A SDK JSON-RPC 2.0**:
+            **params: JSON-RPC operation parameters including:
                 - jsonrpc: "2.0" (identifies JSON-RPC request)
-                - method: A2A SDK method (e.g., "agent.getCard", "agent.executeSkill")
+                - method: A2A SDK method (e.g., "message/send")
                 - params: Method parameters (object)
                 - id: Request identifier
 
-                For register_agent:
-                    - agent_id: Agent identifier
-                    - agent_name: Human-readable name
-                    - capabilities: List of capabilities (as JSON string)
-                    - endpoint_url: Agent endpoint URL
-                    - metadata: Additional metadata (as JSON string)
-
-                For assign_task:
-                    - task_id: Optional task identifier (auto-generated if not provided)
-                    - task_type: Type of task
-                    - assigned_agent_id: Optional agent to assign to
-                    - priority: Task priority (low/medium/high/critical)
-                    - input_data: Task input data (as JSON string)
-                    - required_capabilities: Required agent capabilities (as JSON string)
-
-                For route_message:
-                    - message_id: Optional message identifier (auto-generated if not provided)
-                    - from_agent_id: Source agent identifier
-                    - to_agent_id: Destination agent identifier
-                    - message_type: Type of message
-                    - payload: Message payload (as JSON string)
-
         Returns:
-            Operation result
+            JSON-RPC response encoded as JSON.
         """
         self._apply_partition_defaults(params)
 
-        # Check if this is an A2A SDK JSON-RPC request
-        if "jsonrpc" in params and params.get("jsonrpc") == "2.0":
-            # A2A SDK JSON-RPC protocol - delegate to SDK handler (FIXED CLI-5/CLI-6)
-            # Use Config.a2a_server.request_handler for proper async handling
-            if not Config.a2a_server:
-                return Serializer.json_dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "error": {"code": -32603, "message": "A2A SDK not initialized"},
-                        "id": params.get("id"),
-                    }
-                )
+        if params.get("jsonrpc") != "2.0":
+            raise ValueError("A2A protocol calls must use JSON-RPC 2.0 format")
 
-            # Get SDK request handler
-            request_handler = Config.a2a_server.request_handler
-            partition_key = params.get("partition_key")
-
-            # Build ServerCallContext
-            try:
-                from a2a.server.context import ServerCallContext
-                from a2a.types import (
-                    CancelTaskRequest,
-                    GetTaskRequest,
-                    SendMessageRequest,
-                )
-
-                from .handlers.a2a_sdk_compat import (
-                    build_jsonrpc_sdk_request,
-                    jsonrpc_error_response,
-                    jsonrpc_response_from_sdk,
-                )
-
-                context_state = {"partition_key": partition_key}
-                request_metadata = params.get("params", {}).get("metadata", {})
-                if isinstance(request_metadata, dict):
-                    context_state.update(request_metadata)
-
-                context = ServerCallContext(state=context_state)
-
-                method = params.get("method", "")
-
-                # Route to appropriate SDK handler using _run_async wrapper
-                if method == "message/send":
-                    send_request = build_jsonrpc_sdk_request(SendMessageRequest, params)
-                    response = self._run_async(
-                        request_handler.on_message_send(send_request, context)
-                    )
-                    result = jsonrpc_response_from_sdk(response, params.get("id"))
-                elif method == "tasks/get":
-                    get_request = build_jsonrpc_sdk_request(GetTaskRequest, params)
-                    response = self._run_async(
-                        request_handler.on_get_task(get_request, context)
-                    )
-                    result = jsonrpc_response_from_sdk(response, params.get("id"))
-                elif method == "tasks/cancel":
-                    cancel_request = build_jsonrpc_sdk_request(CancelTaskRequest, params)
-                    response = self._run_async(
-                        request_handler.on_cancel_task(cancel_request, context)
-                    )
-                    result = jsonrpc_response_from_sdk(response, params.get("id"))
-                else:
-                    result = jsonrpc_error_response(
-                        -32601,
-                        f"Method not found: {method}",
-                        params.get("id"),
-                    )
-
-                return Serializer.json_dumps(result)
-
-            except ImportError as e:
-                return Serializer.json_dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "error": {
-                            "code": -32603,
-                            "message": f"A2A SDK types not available: {e}",
-                        },
-                        "id": params.get("id"),
-                    }
-                )
-            except Exception as e:
-                self.logger.error(f"Error handling JSON-RPC: {e}", exc_info=True)
-                return Serializer.json_dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "error": {"code": -32603, "message": str(e)},
-                        "id": params.get("id"),
-                    }
-                )
-
-        # REST-style action-based requests
-        action = params.pop("action", None)
-        if not action:
-            raise ValueError(
-                "action parameter is required (register_agent/assign_task/route_message) or use JSON-RPC 2.0 format"
+        if not Config.a2a_server:
+            return Serializer.json_dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32603, "message": "A2A SDK not initialized"},
+                    "id": params.get("id"),
+                }
             )
 
-        partition_key = params.pop("partition_key", None)
+        request_handler = Config.a2a_server.request_handler
+        partition_key = params.get("partition_key")
 
-        from .handlers.a2a_handlers import (
-            handle_agent_handshake,
-            handle_message_routing,
-            handle_task_assignment,
-        )
+        try:
+            from a2a.server.context import ServerCallContext
+            from a2a.types import CancelTaskRequest, GetTaskRequest, SendMessageRequest
 
-        if action == "register_agent":
-            agent_id = params.get("agent_id")
-            if not agent_id:
-                raise ValueError("agent_id is required")
-
-            result = self._run_async(
-                handle_agent_handshake(partition_key=partition_key, agent_info=params)
+            from .handlers.a2a_jsonrpc_bridge import (
+                build_jsonrpc_sdk_request,
+                jsonrpc_error_response,
+                jsonrpc_response_from_sdk,
             )
 
-        elif action == "assign_task":
-            result = self._run_async(
-                handle_task_assignment(partition_key=partition_key, task=params)
+            context_state = {"partition_key": partition_key}
+            request_metadata = params.get("params", {}).get("metadata", {})
+            if isinstance(request_metadata, dict):
+                context_state.update(request_metadata)
+
+            context = ServerCallContext(state=context_state)
+            method = params.get("method", "")
+
+            if method == "message/send":
+                send_request = build_jsonrpc_sdk_request(SendMessageRequest, params)
+                response = self._run_async(
+                    request_handler.on_message_send(send_request, context)
+                )
+                result = jsonrpc_response_from_sdk(response, params.get("id"))
+            elif method == "tasks/get":
+                get_request = build_jsonrpc_sdk_request(GetTaskRequest, params)
+                response = self._run_async(
+                    request_handler.on_get_task(get_request, context)
+                )
+                result = jsonrpc_response_from_sdk(response, params.get("id"))
+            elif method == "tasks/cancel":
+                cancel_request = build_jsonrpc_sdk_request(CancelTaskRequest, params)
+                response = self._run_async(
+                    request_handler.on_cancel_task(cancel_request, context)
+                )
+                result = jsonrpc_response_from_sdk(response, params.get("id"))
+            else:
+                result = jsonrpc_error_response(
+                    -32601,
+                    f"Method not found: {method}",
+                    params.get("id"),
+                )
+
+            return Serializer.json_dumps(result)
+
+        except ImportError as e:
+            return Serializer.json_dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32603,
+                        "message": f"A2A SDK types not available: {e}",
+                    },
+                    "id": params.get("id"),
+                }
             )
-
-        elif action == "route_message":
-            from_agent_id = params.get("from_agent_id")
-            to_agent_id = params.get("to_agent_id")
-
-            if not from_agent_id or not to_agent_id:
-                raise ValueError("from_agent_id and to_agent_id are required")
-
-            result = self._run_async(
-                handle_message_routing(partition_key=partition_key, message=params)
+        except Exception as e:
+            self.logger.error(f"Error handling JSON-RPC: {e}", exc_info=True)
+            return Serializer.json_dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32603, "message": str(e)},
+                    "id": params.get("id"),
+                }
             )
-
-        else:
-            raise ValueError(
-                f"Unknown action: {action}. Valid actions: register_agent, assign_task, route_message"
-            )
-
-        return Serializer.json_dumps(result)
 
     async def daemon(self):
         """
@@ -443,9 +355,7 @@ class A2ADaemonEngine:
                 rest_app = FastAPI(title="A2A Daemon REST API")
 
                 # Add JWT authentication middleware to REST app
-                rest_app.add_middleware(
-                    FlexJWTMiddleware, public_paths=["/health", "/a2a-jsonrpc"]
-                )
+                rest_app.add_middleware(FlexJWTMiddleware, public_paths=["/health"])
 
                 # Mount auth router on REST app
                 rest_app.include_router(auth_router)
@@ -460,11 +370,10 @@ class A2ADaemonEngine:
                 # Mount the REST app on A2A app at /rest
                 a2a_app.mount("/rest", rest_app)
 
-                self.logger.info("REST API mounted at: /rest/a2a/{endpoint_id}/*")
+                self.logger.info("Operations API mounted at: /rest")
                 self.logger.info(
                     "GraphQL endpoint at: /rest/{endpoint_id}/a2a_core_graphql"
                 )
-                self.logger.info("Consolidated JSON-RPC at: /rest/a2a-jsonrpc")
                 self.logger.info("Health check at: /rest/health")
 
                 self.logger.info(
