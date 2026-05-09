@@ -29,6 +29,8 @@ The repository currently contains these documentation files:
 
 | File | Status | Refer To |
 |------|--------|----------|
+| A2A_ARCHITECTURE.md | Protocol architecture and sequence diagrams | [Architecture](A2A_ARCHITECTURE.md) |
+| A2A_PROTOCOL_CALL_FLOW.md | Step-by-step protocol method call paths | [Protocol Call Flow](A2A_PROTOCOL_CALL_FLOW.md) |
 | A2A_DEVELOPMENT_PLAN.md | Active roadmap | [Development Roadmap](A2A_DEVELOPMENT_PLAN.md#6-development-roadmap) |
 | A2A_TEST_PLAN.md | Phase 6-8 test plan | [Test Plan](A2A_TEST_PLAN.md) |
 | INTEGRATION_TEST_PLAN.md | End-to-end / integration test playbook | [Integration Test Plan](INTEGRATION_TEST_PLAN.md) |
@@ -47,7 +49,10 @@ The repository currently contains these documentation files:
 → [A2A_DEVELOPMENT_PLAN.md - Implementation Status](A2A_DEVELOPMENT_PLAN.md#3-implementation-status)
 
 ### "How does the architecture work?"
-→ [A2A_DEVELOPMENT_PLAN.md - Current Architecture](A2A_DEVELOPMENT_PLAN.md#2-current-architecture)
+→ [A2A_ARCHITECTURE.md - Protocol Architecture](A2A_ARCHITECTURE.md)
+
+### "Which functions are called for each protocol method?"
+→ [A2A_PROTOCOL_CALL_FLOW.md - Protocol Call Flow](A2A_PROTOCOL_CALL_FLOW.md)
 
 ### "What are the API endpoints?"
 → [README.md - API Endpoints](../README.md#api-endpoints)
