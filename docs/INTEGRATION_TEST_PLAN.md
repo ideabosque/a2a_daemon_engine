@@ -282,14 +282,14 @@ All 14 mock tests passing successfully:
 | `test_register_agent_mock` | ✅ PASSED | Handshake completed successfully |
 | `test_assign_task_mock` | ✅ PASSED | Task assigned successfully |
 | `test_route_message_mock` | ✅ PASSED | Message routed successfully |
-| `test_execute_task_mock` | ✅ PASSED | Task execution initiated |
+| `test_execute_task_action_removed` | ✅ PASSED | Legacy action rejected |
 | `test_missing_action` | ✅ PASSED | Error handling correct |
 | `test_invalid_action` | ✅ PASSED | Error handling correct |
 | `test_register_agent_flow` | ✅ PASSED | Full flow validated |
 | `test_assign_task_flow` | ✅ PASSED | Full flow validated |
 | `test_route_message_flow` | ✅ PASSED | Full flow validated |
-| `test_execute_task_flow` | ✅ PASSED | Response validated |
-| `test_a2a_actions_parametrized` (4 tests) | ✅ PASSED | All parameter combinations work |
+| `test_execute_task_flow` | ✅ PASSED | Legacy flow rejected |
+| `test_a2a_actions_parametrized` (3 tests) | ✅ PASSED | Supported parameter combinations work |
 
 **Total:** 14/14 mock tests passed (100%)
 

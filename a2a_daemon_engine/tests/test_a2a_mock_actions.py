@@ -146,9 +146,9 @@ def test_route_message_mock(mock_engine):
 @pytest.mark.a2a
 @pytest.mark.task
 @log_test_result
-def test_execute_task_mock(mock_engine):
-    """Test execute_task action with mocked utility."""
-    logger.info("Testing execute_task action with mock...")
+def test_execute_task_action_removed(mock_engine):
+    """Test legacy execute_task action is no longer supported."""
+    logger.info("Testing execute_task action removal...")
 
     payload = {
         "action": "execute_task",
@@ -156,16 +156,8 @@ def test_execute_task_mock(mock_engine):
         "input_data": {"start": True},
     }
 
-    # This uses execute_a2a_task from utility
-    with patch(
-        "a2a_daemon_engine.handlers.a2a_utility.execute_a2a_task"
-    ) as mock_exec:
-        result_json = mock_engine.a2a(**payload)
-        result = Serializer.json_loads(result_json)
-
-        logger.info(f"Result: {Serializer.json_dumps(result, indent=2)}")
-        assert result["status"] == "success"
-        mock_exec.assert_called_once()
+    with pytest.raises(ValueError, match="Unknown action"):
+        mock_engine.a2a(**payload)
 
 
 @pytest.mark.unit
@@ -276,23 +268,18 @@ def test_route_message_flow(mock_engine, sample_message_data):
 @pytest.mark.task
 @log_test_result
 def test_execute_task_flow(mock_engine, sample_execute_task_data):
-    """Test complete task execution flow."""
-    logger.info("Testing task execution flow...")
+    """Test legacy task execution flow is no longer supported."""
+    logger.info("Testing task execution flow removal...")
 
-    with patch(
-        "a2a_daemon_engine.handlers.a2a_utility.execute_a2a_task"
-    ) as mock_exec:
-        mock_exec.return_value = {"result": "completed"}
+    result, error = call_a2a_method(
+        mock_engine,
+        "execute_task",
+        sample_execute_task_data,
+        "execute_task_flow",
+    )
 
-        result, error = call_a2a_method(
-            mock_engine,
-            "execute_task",
-            sample_execute_task_data,
-            "execute_task_flow",
-        )
-
-        assert error is None, f"Task execution failed: {error}"
-        validate_a2a_response(result, expected_keys=["status"])
+    assert result is None
+    assert "Unknown action" in str(error)
 
 
 # ============================================================================
@@ -326,10 +313,6 @@ def test_execute_task_flow(mock_engine, sample_execute_task_data):
                 "message_type": "text",
                 "payload": {"msg": "test"},
             },
-        ),
-        (
-            "execute_task",
-            {"task_id": "task-001", "input_data": {}},
         ),
     ],
 )
@@ -371,10 +354,6 @@ def test_a2a_actions_parametrized(mock_engine, action, payload):
                 return_value={"message_id": "msg-001", "status": "delivered"}
             )
             result_json = mock_engine.a2a(**payload)
-    elif action == "execute_task":
-        with patch("a2a_daemon_engine.handlers.a2a_utility.execute_a2a_task"):
-            result_json = mock_engine.a2a(**payload)
-
     result = Serializer.json_loads(result_json)
     assert result["status"] == "success"
 

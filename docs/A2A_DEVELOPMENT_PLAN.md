@@ -512,12 +512,13 @@ A2A and MCP are **complementary**, not competing. The daemon should expose itsel
 | Add optional `agent_uuid` reference to A2A agent model/type/mutations | 0.5d | `models/a2a_agent.py`, `types/a2a_agent.py`, mutations | **Pending** |
 | Create AI Core bridge helper | 1d | `handlers/a2a_ai_agent_utility.py` | **Pending** |
 | Add timeout, retry, and cancellation-aware polling | 1d | `handlers/a2a_ai_agent_utility.py` | **Pending** |
-| Integrate bridge into selected task execution paths | 1d | `handlers/a2a_executor.py`, `handlers/a2a_handlers.py` | **Pending** |
+| Integrate bridge into A2A task execution path only | 1d | `handlers/a2a_executor.py::_handle_task_execution` | **Pending** |
 | Add mocked unit tests and one integration test path | 1d | `tests/test_ai_agent_integration.py` | **Pending** |
 
 #### Acceptance Criteria
 
 - A2A task execution can invoke AI Core through a narrow helper API.
+- AI Core invocation is reached from `A2ADaemonExecutor._handle_task_execution(...)`; the legacy `action=execute_task` path remains removed.
 - Missing `agent_uuid` results in a clear non-AI path or validation error.
 - AI Core failures become A2A `FAILED` task updates with useful error metadata.
 - Long-running AI Core tasks respect timeout and cancellation limits.

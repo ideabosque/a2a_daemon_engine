@@ -50,6 +50,22 @@ class Colors:
     BOLD = "\033[1m"
 
 
+def get_error_code(data: dict) -> int | None:
+    """Return a JSON-RPC error code when the response has a structured error."""
+    error = data.get("error")
+    return error.get("code") if isinstance(error, dict) else None
+
+
+def get_error_message(data: dict) -> str | None:
+    """Return an error message for structured JSON-RPC or transport errors."""
+    error = data.get("error")
+    if isinstance(error, dict):
+        return error.get("message")
+    if error:
+        return str(error)
+    return None
+
+
 def generate_jwt_token(secret_key: str) -> str:
     """Generate JWT token"""
     if not HAS_JWT:
@@ -85,10 +101,22 @@ def make_request(
             response = requests.post(url, json=data, headers=all_headers, timeout=10)
 
         try:
-            return response.status_code, response.json()
+            resp_data = response.json()
         except ValueError:
-            return response.status_code, {"raw": response.text}
+            resp_data = {"raw": response.text}
+
+        print(f"\n   -> Request: {method} {url}")
+        print(f"   <- Status: {response.status_code}")
+        print(f"   <- Response: {resp_data}")
+        if resp_data.get("error"):
+            print(f"   <- Error: {resp_data['error']}")
+        if response.status_code >= 400:
+            print(f"   <- Request failed with status {response.status_code}: {resp_data}")
+
+        return response.status_code, resp_data
     except requests.exceptions.RequestException as e:
+        print(f"\n   -> Request: {method} {url}")
+        print(f"   <- Request Exception: {e}")
         return 0, {"error": str(e)}
 
 
@@ -259,8 +287,9 @@ def test_a2a_native_ping(base_url: str) -> bool:
 
     if "jsonrpc" in data:
         print_result("A2A Native JSON-RPC", True, f"Version: {data.get('jsonrpc')}")
-        if data.get("error"):
-            print(f"       Error: {data['error'].get('message')}")
+        error_message = get_error_message(data)
+        if error_message:
+            print(f"       Error: {error_message}")
         return True
     else:
         print_result("A2A Native JSON-RPC", False, "Invalid response")
@@ -278,7 +307,7 @@ def test_a2a_getcard_expected(base_url: str) -> bool:
         headers={"Content-Type": "application/json"},
     )
 
-    if data.get("error", {}).get("code") == -32601:
+    if get_error_code(data) == -32601:
         print_expected("A2A GetCard JSON-RPC")
         print("       Error Code: -32601 (Method not found)")
         print("       Note: Agent Card is at /.well-known/agent-card.json (HTTP GET)")
@@ -321,13 +350,68 @@ def test_message_send(base_url: str, token: str) -> bool:
         print(f"       Task ID: {result.get('id')}")
         print(f"       Status: {result.get('status')}")
         return True
-    elif data.get("error", {}).get("code") in [-32601, -32600]:
+    elif get_error_code(data) in [-32601, -32600]:
         print_expected("JSON-RPC message/send")
         print("       Handler may not be fully implemented yet")
         return True
     else:
         print_result("JSON-RPC message/send", False, f"Status: {status}")
         return False
+
+
+def test_task_execution_request(base_url: str, token: str) -> bool:
+    """Test a task execution request through A2A message/send."""
+    print_section("TEST: JSON-RPC task execution request (With Auth)")
+
+    if not token:
+        print_result("JSON-RPC task execution request", True, "Skipped - no JWT")
+        return True
+
+    task_id = "test-task-exec-001"
+    status, data = make_request(
+        f"{base_url}/rest/a2a-jsonrpc",
+        method="POST",
+        data={
+            "jsonrpc": "2.0",
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "type": "text",
+                            "text": "Execute a dry-run test task",
+                        }
+                    ],
+                },
+                "metadata": {
+                    "operation": "task_execution",
+                    "task_data": {
+                        "task_id": task_id,
+                        "task_type": "test",
+                        "priority": "low",
+                        "dry_run": True,
+                    },
+                },
+            },
+            "id": 2,
+        },
+        headers={"Content-Type": "application/json"},
+        token=token,
+    )
+
+    result = data.get("result", {})
+    parts = result.get("parts", []) if isinstance(result, dict) else []
+    text = parts[0].get("text", "") if parts and isinstance(parts[0], dict) else ""
+
+    if status == 200 and task_id in text and "dry-run mode" in text:
+        print_result("JSON-RPC task execution request", True)
+        print(f"       Task ID: {task_id}")
+        print(f"       Response: {text}")
+        return True
+
+    print_result("JSON-RPC task execution request", False, f"Status: {status}")
+    return False
 
 
 def print_summary(results: list):
@@ -416,6 +500,12 @@ def main():
         results.append(("JSON-RPC (No Auth)", test_jsonrpc_no_auth(args.endpoint)))
         results.append(
             ("JSON-RPC message/send", test_message_send(args.endpoint, jwt_token))
+        )
+        results.append(
+            (
+                "JSON-RPC task execution request",
+                test_task_execution_request(args.endpoint, jwt_token),
+            )
         )
 
     print_summary(results)

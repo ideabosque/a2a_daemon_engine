@@ -38,6 +38,12 @@ try:
 except ImportError:
     HAS_A2A_SDK = False
 
+from .a2a_sdk_compat import (
+    build_jsonrpc_sdk_request,
+    jsonrpc_error_response,
+    jsonrpc_response_from_sdk,
+)
+
 __author__ = "SilvaEngine Team"
 
 
@@ -489,16 +495,8 @@ async def create_task(
     Returns:
         Task creation and assignment result
     """
-    # TODO: NEXT STEP - Trigger async task execution after assignment
-    # After task is assigned to an agent:
-    # 1. Store task in DynamoDB via handle_task_assignment()
-    # 2. Trigger asynchronous execution:
-    #    Option A: Send to SQS queue for background processing
-    #    Option B: Use EventBridge to trigger Lambda/ECS task
-    #    Option C: Call Config.a2a_server.execute_task() if using A2A SDK
-    # 3. Return task_id immediately (don't block waiting for execution)
-    # 4. Client can poll GET /tasks/{task_id} for status updates
-    # See: a2a_utility.py execute_a2a_task() for execution logic
+    # Task execution is handled through the A2A message/send executor path.
+    # This REST endpoint only creates/assigns the task and returns immediately.
 
     partition_key, part_id = _get_partition_key(endpoint_id, request)
 
@@ -764,14 +762,11 @@ async def handle_a2a_jsonrpc(request: Request) -> JSONResponse:
         # Check if A2A SDK is available
         if not Config.a2a_server or not HAS_A2A_SDK:
             return JSONResponse(
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {
-                        "code": -32603,
-                        "message": "A2A SDK not available. Install with: pip install -e .[a2a]",
-                    },
-                    "id": message.get("id"),
-                },
+                content=jsonrpc_error_response(
+                    -32603,
+                    "A2A SDK not available. Install with: pip install -e .[a2a]",
+                    message.get("id"),
+                ),
                 status_code=503,
             )
 
@@ -779,11 +774,14 @@ async def handle_a2a_jsonrpc(request: Request) -> JSONResponse:
         partition_key = request.headers.get("Part-ID") or request.headers.get(
             "X-Partition-Key"
         )
+        context_state = {"partition_key": partition_key}
+        request_metadata = message.get("params", {}).get("metadata", {})
+        if isinstance(request_metadata, dict):
+            context_state.update(request_metadata)
 
         # Build request context
         context = ServerCallContext(
-            agent_card=Config.a2a_server.agent_card,
-            partition_key=partition_key,
+            state=context_state,
         )
 
         # Get SDK request handler
@@ -793,26 +791,32 @@ async def handle_a2a_jsonrpc(request: Request) -> JSONResponse:
         method = message.get("method", "")
 
         if method == "message/send":
-            # Use SDK handler for message/send
-            send_request = SendMessageRequest(**message.get("params", {}))
+            # Use SDK handler for message/send across Pydantic/protobuf SDKs.
+            send_request = build_jsonrpc_sdk_request(SendMessageRequest, message)
             response = await request_handler.on_message_send(send_request, context)
-            return JSONResponse(content=response.model_dump())
+            return JSONResponse(
+                content=jsonrpc_response_from_sdk(response, message.get("id"))
+            )
         elif method == "tasks/get":
-            get_request = GetTaskRequest(**message.get("params", {}))
+            get_request = build_jsonrpc_sdk_request(GetTaskRequest, message)
             response = await request_handler.on_get_task(get_request, context)
-            return JSONResponse(content=response.model_dump())
+            return JSONResponse(
+                content=jsonrpc_response_from_sdk(response, message.get("id"))
+            )
         elif method == "tasks/cancel":
-            cancel_request = CancelTaskRequest(**message.get("params", {}))
+            cancel_request = build_jsonrpc_sdk_request(CancelTaskRequest, message)
             response = await request_handler.on_cancel_task(cancel_request, context)
-            return JSONResponse(content=response.model_dump())
+            return JSONResponse(
+                content=jsonrpc_response_from_sdk(response, message.get("id"))
+            )
         else:
             # Method not found
             return JSONResponse(
-                content={
-                    "jsonrpc": "2.0",
-                    "error": {"code": -32601, "message": f"Method not found: {method}"},
-                    "id": message.get("id"),
-                },
+                content=jsonrpc_error_response(
+                    -32601,
+                    f"Method not found: {method}",
+                    message.get("id"),
+                ),
                 status_code=200,
             )
 
@@ -821,15 +825,12 @@ async def handle_a2a_jsonrpc(request: Request) -> JSONResponse:
             Config.logger.error(f"Error handling JSON-RPC request: {e}", exc_info=True)
 
         return JSONResponse(
-            content={
-                "jsonrpc": "2.0",
-                "error": {
-                    "code": -32603,
-                    "message": "Internal error",
-                    "data": str(e),
-                },
-                "id": None,
-            },
+            content=jsonrpc_error_response(
+                -32603,
+                "Internal error",
+                message.get("id") if "message" in locals() else None,
+                str(e),
+            ),
             status_code=500,
         )
 
@@ -846,14 +847,19 @@ async def get_a2a_jsonrpc_info() -> dict[str, Any]:
         "endpoint": "/a2a-jsonrpc",
         "description": "A2A Protocol JSON-RPC interface",
         "methods": {
-            "agent.getCard": "Get agent card (capabilities, skills, modes)",
-            "agent.listSkills": "List available skills",
-            "ping": "Simple ping test",
+            "message/send": "Send a message to the agent",
+            "tasks/get": "Get task state by task ID",
+            "tasks/cancel": "Cancel a running task",
         },
         "example_request": {
             "jsonrpc": "2.0",
-            "method": "agent.getCard",
-            "params": {},
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "Hello"}],
+                }
+            },
             "id": 1,
         },
         "note": "This endpoint uses the same handler as serverless a2a() function and /a2a-sdk mounted app",

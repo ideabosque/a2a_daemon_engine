@@ -12,23 +12,24 @@ This implementation provides:
 1. A2A-compliant server with AgentCard exposure
 2. Task execution through AgentExecutor pattern
 3. Integration with existing DynamoDB-based handlers
-4. Fallback implementation when a2a-sdk is not available
 """
 
 import logging
 from typing import Any
 
 # A2A SDK is now required (version >=0.3.0 with http-server extras)
-from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
+    AgentInterface,
     AgentProvider,
     AgentSkill,
 )
 from silvaengine_utility.serializer import Serializer
+from starlette.applications import Starlette
 
 from .config import Config
 
@@ -44,7 +45,7 @@ class A2AProtocolServer:
 
     Manages agent-to-agent communication using the A2A protocol SDK.
     Provides both:
-    1. A2A-compliant HTTP/REST server (via A2AStarletteApplication)
+    1. A2A-compliant HTTP/REST server (via a2a.server.routes)
     2. Compatibility methods for existing daemon handlers
 
     Based on the official A2A SDK pattern:
@@ -77,12 +78,14 @@ class A2AProtocolServer:
         self.request_handler = None
         self.task_store = None
         self.agent_executor = None
+        self.initialization_error = None
 
         try:
             self._initialize_a2a_server()
             self.logger.info("A2A Protocol Server initialized successfully")
         except Exception as e:
-            self.logger.error(f"A2A Server initialization failed: {e}")
+            self.initialization_error = str(e)
+            self.logger.error(f"A2A Server initialization failed: {e}", exc_info=True)
             self.app = None
 
     def _initialize_a2a_server(self) -> None:
@@ -94,7 +97,7 @@ class A2AProtocolServer:
         2. TaskStore - Manages task state (InMemoryTaskStore)
         3. AgentExecutor - Executes tasks (A2ADaemonAgentExecutor)
         4. RequestHandler - Routes A2A RPC calls (DefaultRequestHandler)
-        5. A2AStarletteApplication - HTTP server implementation
+        5. Starlette application assembled from A2A SDK route factories
         """
         # Extract configuration
         server_name = self.settings.get("a2a_server_name", "A2A Daemon Engine")
@@ -170,10 +173,11 @@ class A2AProtocolServer:
             streaming_manager=self.streaming_manager,
         )
 
-        # Create request handler - routes A2A RPC calls to executor
+        # Create request handler - routes A2A RPC calls to executor.
         self.request_handler = DefaultRequestHandler(
             agent_executor=self.agent_executor,
             task_store=self.task_store,
+            agent_card=self.agent_card,
         )
 
         # Create A2A Starlette application
@@ -197,11 +201,16 @@ class A2AProtocolServer:
         #
         # See docs/A2A_GAP_ANALYSIS.md section 2.1 for details.
 
-        self.app = A2AStarletteApplication(
-            agent_card=self.agent_card,
-            http_handler=self.request_handler,
-            context_builder=None,  # Optional: custom context builder
-            card_modifier=None,  # Optional: modify card per request
+        self.app = Starlette(
+            routes=[
+                *create_agent_card_routes(self.agent_card),
+                *create_jsonrpc_routes(
+                    request_handler=self.request_handler,
+                    rpc_url="/",
+                    context_builder=None,
+                    enable_v0_3_compat=True,
+                ),
+            ]
         )
 
         # Phase 7: Register SSE streaming endpoints
@@ -316,8 +325,9 @@ class A2AProtocolServer:
         # Define capabilities (what the agent supports)
         # Phase 7: Enable streaming support
         capabilities = AgentCapabilities(
-            streaming=True,  # Phase 7 Task 1: SSE streaming enabled
-            pushNotifications=True,  # Phase 7 Task 5: Push notifications enabled
+            streaming=True,
+            push_notifications=True,
+            extended_agent_card=True,
         )
 
         # Define provider information
@@ -327,18 +337,21 @@ class A2AProtocolServer:
         )
 
         # Create AgentCard
-        # Note: supportsAuthenticatedExtendedCard indicates if the agent
-        # can provide extended card information for authenticated requests
         agent_card = AgentCard(
             name=name,
             description=description,
-            url=url,
+            supported_interfaces=[
+                AgentInterface(
+                    url=url,
+                    protocol_binding="JSONRPC",
+                    protocol_version="0.3.0",
+                )
+            ],
             version=version,
-            defaultInputModes=["text"],
-            defaultOutputModes=["text"],
+            default_input_modes=["text"],
+            default_output_modes=["text"],
             capabilities=capabilities,
             skills=skills,
-            supportsAuthenticatedExtendedCard=True,  # Phase 8: Extended card enabled
             provider=provider,
         )
 
@@ -353,7 +366,7 @@ class A2AProtocolServer:
         2. Integrated into an existing FastAPI/Starlette app via routes()
 
         Returns:
-            A2AStarletteApplication instance or None if SDK not available
+            Starlette application instance.
         """
         return self.app
 
@@ -584,11 +597,7 @@ class A2AProtocolServer:
 
             task = data.get("data", {}).get("insertUpdateA2aTask", {})
 
-            # TODO: Trigger async task execution here
-            # Options:
-            # 1. SQS: boto3.client('sqs').send_message(QueueUrl=..., MessageBody=Serializer.json_dumps({task_id, partition_key}))
-            # 2. EventBridge: boto3.client('events').put_events(Entries=[{...}])
-            # 3. Async: asyncio.create_task(execute_a2a_task(partition_key, task_id, task_data))
+            # Task execution is handled through the A2A message/send executor path.
 
             return {
                 "status": "assigned",

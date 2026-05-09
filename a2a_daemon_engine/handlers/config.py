@@ -124,6 +124,7 @@ class Config:
     logger = None
     a2a_core = None
     a2a_server = None  # A2A Protocol Server
+    a2a_server_error = None
 
     # AWS Services
     aws_s3 = None
@@ -245,9 +246,28 @@ class Config:
             from .a2a_server import A2AProtocolServer
 
             cls.a2a_server = A2AProtocolServer(logger, **setting)
+            if not cls.a2a_server.app or not cls.a2a_server.request_handler:
+                cls.a2a_server_error = getattr(
+                    cls.a2a_server,
+                    "initialization_error",
+                    "A2A Protocol Server did not create an app/request handler",
+                )
+                cls.a2a_server = None
+                logger.warning(
+                    "A2A Protocol Server initialization skipped: "
+                    f"{cls.a2a_server_error}"
+                )
+                return
+
+            cls.a2a_server_error = None
             logger.info("A2A Protocol Server initialized successfully.")
         except Exception as e:
-            logger.warning(f"A2A Protocol Server initialization skipped: {e}")
+            cls.a2a_server_error = str(e)
+            logger.warning(
+                "A2A Protocol Server initialization skipped: "
+                f"{cls.a2a_server_error}",
+                exc_info=True,
+            )
             cls.a2a_server = None
 
     @classmethod

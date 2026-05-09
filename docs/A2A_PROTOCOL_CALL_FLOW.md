@@ -770,25 +770,18 @@ Step-by-step:
 7. Returns status/data.
 8. `a2a()` serializes response.
 
-### 11.4 `action=execute_task`
+### 11.4 Removed Legacy Execution Action
 
-Entry point:
+`action=execute_task` is no longer supported. Task execution now enters through the A2A protocol path:
 
-1. `main.py::A2ADaemonEngine.a2a(**params)`
+```text
+JSON-RPC message/send
+  -> DefaultRequestHandler.on_message_send(...)
+  -> A2ADaemonExecutor.execute(...)
+  -> A2ADaemonExecutor._handle_task_execution(...)
+```
 
-Step-by-step:
-
-1. Applies partition defaults.
-2. Pops `action`.
-3. Validates `task_id`.
-4. Imports:
-   - `handlers/a2a_utility.py::execute_a2a_task`
-5. Calls:
-   - `execute_a2a_task(partition_key=partition_key, task_id=task_id, task_params=params)`
-6. Builds response:
-   - `status="success"`
-   - message indicating task execution initiation
-7. Serializes response.
+Use `message/send` with task execution metadata instead of direct `action=execute_task` calls.
 
 ---
 
@@ -1103,9 +1096,8 @@ HTTP POST /
         -> RequestContext.get("operation", "task_execution")
         -> operation dispatch
           -> A2ADaemonExecutor._handle_task_execution(...)
-            -> a2a_utility.execute_a2a_task(...)
-            -> a2a_utility.get_a2a_task(...)
-            -> a2a_utility.update_a2a_task(...) or insert_a2a_task(...)
+            -> task execution handler logic
+            -> emits A2A task/message event
           -> A2ADaemonExecutor._handle_message_routing(...)
             -> a2a_handlers.handle_message_routing(...)
           -> A2ADaemonExecutor._handle_agent_registration(...)
@@ -1341,18 +1333,16 @@ A2ADaemonEngine.a2a(event, context)
 Task execution:
 
 ```text
-A2ADaemonEngine.a2a(event, context)
-  -> action == "execute_task"
-  -> a2a_utility.execute_a2a_task(partition_key, task_id, ...)
-    -> a2a_utility.get_a2a_task(...)
-    -> execute/update task state
-    -> a2a_utility.update_a2a_task(...)
+JSON-RPC message/send
+  -> DefaultRequestHandler.on_message_send(...)
+  -> A2ADaemonExecutor.execute(...)
+  -> A2ADaemonExecutor._handle_task_execution(...)
 ```
 
 Runtime effect:
 
 1. These paths exist for direct invocation and serverless compatibility.
-2. They bypass HTTP routing but still use the same handler and persistence modules.
+2. Task execution itself is no longer direct-action based; it follows the A2A protocol executor path.
 3. `_apply_partition_defaults` is important because direct events may omit HTTP headers that normally carry tenant/partition data.
 
 ### 15.11 GraphQL Direct Method Path
@@ -1472,7 +1462,6 @@ Runtime effect:
 | `action=register_agent` | `A2ADaemonEngine.a2a` | `handle_agent_handshake`, `A2AProtocolServer.handle_handshake`, GraphQL agent mutation |
 | `action=assign_task` | `A2ADaemonEngine.a2a` | `handle_task_assignment`, GraphQL task mutation or server compatibility method |
 | `action=route_message` | `A2ADaemonEngine.a2a` | `handle_message_routing`, GraphQL message mutation or server compatibility method |
-| `action=execute_task` | `A2ADaemonEngine.a2a` | `a2a_utility.execute_a2a_task` |
 | gRPC `SendMessage` | `A2AGRPCServicer.SendMessage` | `_RequestContextAdapter`, `A2ADaemonExecutor.execute` |
 | gRPC streaming | `A2AGRPCServicer.SendMessageStream` / `SubscribeToTask` | `_active_streams`, executor/event queues |
 | gRPC task methods | `A2AGRPCServicer.GetTask/ListTasks/CancelTask` | task store, executor cancel |

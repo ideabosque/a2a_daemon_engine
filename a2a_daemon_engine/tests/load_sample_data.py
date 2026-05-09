@@ -370,45 +370,8 @@ def generate_and_load_data(engine):
                 }
             )
 
-    # 4. Execute Some Tasks
-    logger.info("\n--- Executing Tasks ---")
-    task_ids = list(task_map.values())
-
-    for i in range(NUM_TASK_EXECUTIONS):
-        if not task_ids:
-            break
-
-        task_id = random.choice(task_ids)
-        execution_input = {
-            "task_id": task_id,
-            "execution_context": {
-                "retry_count": 0,
-                "priority": random.choice(["low", "medium", "high"]),
-                "timeout_seconds": random.randint(30, 300),
-            },
-            "start": True,
-        }
-
-        logger.info(f"Executing Task: {task_id}...")
-
-        result = call_a2a_action(
-            engine,
-            "execute_task",
-            task_id=task_id,
-            input_data=execution_input,
-        )
-
-        if result:
-            logger.info("  -> Task executed")
-
-            test_data_updates["task_executions"].append(
-                {
-                    "task_id": task_id,
-                    "execution_input": execution_input,
-                    "status": "COMPLETED",
-                    "executed_at": pendulum.now("UTC").to_iso8601_string(),
-                }
-            )
+    # 4. Task execution now uses the A2A message/send executor path.
+    logger.info("\n--- Skipping legacy execute_task action ---")
 
     # Persist generated data for tests
     persist_test_data(test_data_updates)

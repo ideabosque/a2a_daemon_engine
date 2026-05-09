@@ -110,6 +110,27 @@ def _agent_text_message(text: str) -> Any:
     )
 
 
+async def _emit_event(event_queue: EventQueue, event: Any) -> None:
+    """Emit an event across supported A2A SDK EventQueue API versions."""
+    if hasattr(event_queue, "enqueue_event"):
+        await event_queue.enqueue_event(event)
+        return
+    await event_queue.put(event)
+
+
+def _context_get(request_context: RequestContext, key: str, default: Any = None) -> Any:
+    """Read custom context values across supported A2A SDK RequestContext versions."""
+    if hasattr(request_context, "get"):
+        return request_context.get(key, default)
+
+    call_context = getattr(request_context, "call_context", None)
+    state = getattr(call_context, "state", None)
+    if isinstance(state, dict):
+        return state.get(key, default)
+
+    return default
+
+
 class A2ADaemonExecutor(AgentExecutor):
     """
     A2A Daemon Agent Executor following canonical A2A SDK pattern.
@@ -166,11 +187,11 @@ class A2ADaemonExecutor(AgentExecutor):
             if not user_input:
                 error_msg = "No user input provided in request context"
                 self.logger.error(error_msg)
-                await event_queue.put(_status_update_event(_task_state("FAILED")))
+                await _emit_event(event_queue, _agent_text_message(error_msg))
                 return
 
             # Extract partition key from context (our multi-tenant extension)
-            partition_key = request_context.get("partition_key")
+            partition_key = _context_get(request_context, "partition_key")
             if not partition_key:
                 partition_key = "default#default"
                 self.logger.warning(
@@ -178,7 +199,7 @@ class A2ADaemonExecutor(AgentExecutor):
                 )
 
             # Determine operation type from context
-            operation = request_context.get("operation", "task_execution")
+            operation = _context_get(request_context, "operation", "message_response")
 
             self.logger.info(
                 f"Executing operation '{operation}' for partition: {partition_key}"
@@ -189,6 +210,8 @@ class A2ADaemonExecutor(AgentExecutor):
                 await self._handle_task_execution(
                     partition_key, request_context, event_queue
                 )
+            elif operation == "message_response":
+                await self._handle_message_response(user_input, event_queue)
             elif operation == "message_routing":
                 await self._handle_message_routing(
                     partition_key, request_context, event_queue
@@ -200,11 +223,24 @@ class A2ADaemonExecutor(AgentExecutor):
             else:
                 error_msg = f"Unknown operation: {operation}"
                 self.logger.error(error_msg)
-                await event_queue.put(_status_update_event(_task_state("FAILED")))
+                await _emit_event(event_queue, _status_update_event(_task_state("FAILED")))
 
         except Exception as e:
             self.logger.error(f"Task execution failed: {e}", exc_info=True)
-            await event_queue.put(_status_update_event(_task_state("FAILED")))
+            await _emit_event(event_queue, _status_update_event(_task_state("FAILED")))
+
+    async def _handle_message_response(
+        self,
+        user_input: str,
+        event_queue: EventQueue,
+    ) -> None:
+        """
+        Handle a plain A2A message/send request as a message-only interaction.
+        """
+        await _emit_event(
+            event_queue,
+            _agent_text_message(f"A2A Daemon received: {user_input}"),
+        )
 
     async def _handle_task_execution(
         self,
@@ -220,17 +256,30 @@ class A2ADaemonExecutor(AgentExecutor):
         from .a2a_handlers import handle_task_assignment
 
         # Extract task data from context
-        task_data = request_context.get("task_data", {})
+        task_data = _context_get(request_context, "task_data", {})
         user_input = request_context.get_user_input()
 
         # Add user input to task description if provided
         if user_input and "description" not in task_data:
             task_data["description"] = user_input
 
+        if task_data.get("dry_run"):
+            task_id = task_data.get("task_id", "dry-run-task")
+            await _emit_event(
+                event_queue,
+                _agent_text_message(
+                    f"Task {task_id} executed in dry-run mode: {task_data['description']}"
+                ),
+            )
+            return
+
+        # TODO: Integrate ai_agent_core_engine here via a narrow helper such as
+        # a2a_ai_agent_utility.execute_ai_agent_task(...), then map AI Core
+        # results/states back into A2A message/task events.
         self.logger.info(f"Assigning task: {task_data.get('id', 'new')}")
 
         # Emit working status
-        await event_queue.put(_status_update_event(_task_state("WORKING")))
+        await _emit_event(event_queue, _status_update_event(_task_state("WORKING")))
 
         # Execute task via existing handler
         result = await handle_task_assignment(partition_key, task_data)
@@ -240,12 +289,10 @@ class A2ADaemonExecutor(AgentExecutor):
             f"Task {result.get('id')} assigned to agent {result.get('agent_id')}"
         )
         event = _agent_text_message(result_text)
-        await event_queue.put(event)
+        await _emit_event(event_queue, event)
 
         # Emit completion status
-        await event_queue.put(
-            _status_update_event(_task_state("COMPLETED"))
-        )
+        await _emit_event(event_queue, _status_update_event(_task_state("COMPLETED")))
 
         self.logger.info(f"Task {result.get('id')} completed successfully")
 
@@ -263,7 +310,7 @@ class A2ADaemonExecutor(AgentExecutor):
         from .a2a_handlers import handle_message_routing
 
         # Extract message data from context
-        message_data = request_context.get("message_data", {})
+        message_data = _context_get(request_context, "message_data", {})
         user_input = request_context.get_user_input()
 
         # Add user input to message content if provided
@@ -286,7 +333,7 @@ class A2ADaemonExecutor(AgentExecutor):
         delivery_status = "initiated" if result.get("status") == "success" else "failed"
         result_text = f"Message {result.get('data', {}).get('id', 'unknown')} routed and delivery {delivery_status}"
         event = _agent_text_message(result_text)
-        await event_queue.put(event)
+        await _emit_event(event_queue, event)
 
         # Emit completion status
         final_state = (
@@ -294,7 +341,7 @@ class A2ADaemonExecutor(AgentExecutor):
             if result.get("status") == "success"
             else _task_state("FAILED")
         )
-        await event_queue.put(_status_update_event(final_state))
+        await _emit_event(event_queue, _status_update_event(final_state))
 
         self.logger.info(f"Message routed successfully, delivery {delivery_status}")
 
@@ -312,7 +359,7 @@ class A2ADaemonExecutor(AgentExecutor):
         from .a2a_handlers import handle_agent_handshake
 
         # Extract agent data from context
-        agent_data = request_context.get("agent_data", {})
+        agent_data = _context_get(request_context, "agent_data", {})
 
         self.logger.info(
             f"Registering agent: {agent_data.get('agent_id', agent_data.get('id', 'new'))}"
@@ -324,12 +371,10 @@ class A2ADaemonExecutor(AgentExecutor):
         # Emit result
         result_text = f"Agent {result.get('id')} registered successfully"
         event = _agent_text_message(result_text)
-        await event_queue.put(event)
+        await _emit_event(event_queue, event)
 
         # Emit completion status
-        await event_queue.put(
-            _status_update_event(_task_state("COMPLETED"))
-        )
+        await _emit_event(event_queue, _status_update_event(_task_state("COMPLETED")))
 
         self.logger.info(f"Agent {result.get('id')} registered successfully")
 

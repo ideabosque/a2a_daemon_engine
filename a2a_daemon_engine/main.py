@@ -213,13 +213,12 @@ class A2ADaemonEngine:
         - register_agent: Register an agent in the A2A network
         - assign_task: Assign a task to an agent
         - route_message: Route a message between agents
-        - execute_task: Asynchronously execute an A2A task
 
         Args:
             **params: Operation parameters including:
 
                 **REST-style (action-based)**:
-                - action: Operation type (register_agent/assign_task/route_message/execute_task)
+                - action: Operation type (register_agent/assign_task/route_message)
 
                 **A2A SDK JSON-RPC 2.0**:
                 - jsonrpc: "2.0" (identifies JSON-RPC request)
@@ -248,11 +247,6 @@ class A2ADaemonEngine:
                     - to_agent_id: Destination agent identifier
                     - message_type: Type of message
                     - payload: Message payload (as JSON string)
-
-                For execute_task:
-                    - task_id: Task identifier (required)
-                    - task_type: Type of task
-                    - input_data: Task input data (as JSON string)
 
         Returns:
             Operation result
@@ -285,41 +279,46 @@ class A2ADaemonEngine:
                     SendMessageRequest,
                 )
 
-                context = ServerCallContext(
-                    agent_card=Config.a2a_server.agent_card,
-                    partition_key=partition_key,
+                from .handlers.a2a_sdk_compat import (
+                    build_jsonrpc_sdk_request,
+                    jsonrpc_error_response,
+                    jsonrpc_response_from_sdk,
                 )
+
+                context_state = {"partition_key": partition_key}
+                request_metadata = params.get("params", {}).get("metadata", {})
+                if isinstance(request_metadata, dict):
+                    context_state.update(request_metadata)
+
+                context = ServerCallContext(state=context_state)
 
                 method = params.get("method", "")
 
                 # Route to appropriate SDK handler using _run_async wrapper
                 if method == "message/send":
-                    send_request = SendMessageRequest(**params.get("params", {}))
+                    send_request = build_jsonrpc_sdk_request(SendMessageRequest, params)
                     response = self._run_async(
                         request_handler.on_message_send(send_request, context)
                     )
-                    result = response.model_dump()
+                    result = jsonrpc_response_from_sdk(response, params.get("id"))
                 elif method == "tasks/get":
-                    get_request = GetTaskRequest(**params.get("params", {}))
+                    get_request = build_jsonrpc_sdk_request(GetTaskRequest, params)
                     response = self._run_async(
                         request_handler.on_get_task(get_request, context)
                     )
-                    result = response.model_dump()
+                    result = jsonrpc_response_from_sdk(response, params.get("id"))
                 elif method == "tasks/cancel":
-                    cancel_request = CancelTaskRequest(**params.get("params", {}))
+                    cancel_request = build_jsonrpc_sdk_request(CancelTaskRequest, params)
                     response = self._run_async(
                         request_handler.on_cancel_task(cancel_request, context)
                     )
-                    result = response.model_dump()
+                    result = jsonrpc_response_from_sdk(response, params.get("id"))
                 else:
-                    result = {
-                        "jsonrpc": "2.0",
-                        "error": {
-                            "code": -32601,
-                            "message": f"Method not found: {method}",
-                        },
-                        "id": params.get("id"),
-                    }
+                    result = jsonrpc_error_response(
+                        -32601,
+                        f"Method not found: {method}",
+                        params.get("id"),
+                    )
 
                 return Serializer.json_dumps(result)
 
@@ -348,7 +347,7 @@ class A2ADaemonEngine:
         action = params.pop("action", None)
         if not action:
             raise ValueError(
-                "action parameter is required (register_agent/assign_task/route_message/execute_task) or use JSON-RPC 2.0 format"
+                "action parameter is required (register_agent/assign_task/route_message) or use JSON-RPC 2.0 format"
             )
 
         partition_key = params.pop("partition_key", None)
@@ -384,27 +383,9 @@ class A2ADaemonEngine:
                 handle_message_routing(partition_key=partition_key, message=params)
             )
 
-        elif action == "execute_task":
-            task_id = params.get("task_id")
-            if not task_id:
-                raise ValueError("task_id is required for task execution")
-
-            # Import task execution logic
-            from .handlers.a2a_utility import execute_a2a_task
-
-            # Execute task synchronously
-            execute_a2a_task(
-                partition_key=partition_key, task_id=task_id, task_params=params
-            )
-
-            result = {
-                "status": "success",
-                "message": f"Task {task_id} execution initiated",
-            }
-
         else:
             raise ValueError(
-                f"Unknown action: {action}. Valid actions: register_agent, assign_task, route_message, execute_task"
+                f"Unknown action: {action}. Valid actions: register_agent, assign_task, route_message"
             )
 
         return Serializer.json_dumps(result)
@@ -429,14 +410,28 @@ class A2ADaemonEngine:
                 from .handlers.auth_router import router as auth_router
                 from .handlers.middleware import FlexJWTMiddleware
 
-                if not Config.a2a_server:
-                    self.logger.error(
-                        "A2A SDK server not initialized - install with: pip install -e .[a2a]"
+                if not Config.a2a_server or not Config.a2a_server.app:
+                    reason = (
+                        getattr(Config, "a2a_server_error", None)
+                        or "A2A server app was not created"
                     )
-                    raise RuntimeError("A2A SDK server required for HTTP transport")
+                    self.logger.error(
+                        "A2A SDK server not initialized for HTTP transport: "
+                        f"{reason}"
+                    )
+                    raise RuntimeError(
+                        "A2A SDK server required for HTTP transport. "
+                        f"Initialization error: {reason}"
+                    )
 
-                # Get the A2A SDK Starlette application (PRIMARY)
-                a2a_app = Config.a2a_server.app.build()
+                # Get the A2A SDK Starlette application (PRIMARY). Older SDK
+                # wrappers expose build(); a2a-sdk 1.x route factories already
+                # return a Starlette app.
+                a2a_app = (
+                    Config.a2a_server.app.build()
+                    if hasattr(Config.a2a_server.app, "build")
+                    else Config.a2a_server.app
+                )
 
                 self.logger.info("A2A SDK app initialized as primary application")
                 self.logger.info(

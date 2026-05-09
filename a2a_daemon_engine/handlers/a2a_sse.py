@@ -398,8 +398,9 @@ def create_sse_endpoints(app: Any, streaming_manager: StreamingTaskManager) -> N
 
         return streaming_manager.create_sse_response(task_id, last_event_id)
 
-    # Add route
-    app.routes.append(
+    # Add route (handle both list attribute and callable method)
+    routes = app.routes() if callable(app.routes) else app.routes
+    routes.append(
         Route("/tasks/{task_id}/stream", endpoint=subscribe_to_task)
     )
 
