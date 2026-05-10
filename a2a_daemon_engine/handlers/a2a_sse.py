@@ -27,6 +27,7 @@ import logging
 import time
 from collections import deque
 from collections.abc import AsyncIterable
+from contextlib import suppress
 from typing import Any
 
 import pendulum
@@ -430,17 +431,33 @@ class StreamingTaskManager:
         heartbeat_interval = self.heartbeat_interval
 
         async def event_generator():
-            last_heartbeat = time.monotonic()
-            async for event in self.event_queue.subscribe(task_id, last_event_id):
-                if event is None:
-                    break
-                # Emit keep-alive comment if enough time has passed.
-                now = time.monotonic()
-                if now - last_heartbeat >= heartbeat_interval:
-                    yield b": keep-alive\n\n"
-                    last_heartbeat = now
-                yield event.to_sse_format().encode('utf-8')
-                last_heartbeat = time.monotonic()
+            subscription = self.event_queue.subscribe(task_id, last_event_id)
+            next_event = asyncio.create_task(anext(subscription))
+
+            try:
+                while True:
+                    done, _ = await asyncio.wait(
+                        {next_event},
+                        timeout=heartbeat_interval,
+                    )
+
+                    if not done:
+                        yield b": keep-alive\n\n"
+                        continue
+
+                    try:
+                        event = next_event.result()
+                    except StopAsyncIteration:
+                        break
+
+                    yield event.to_sse_format().encode('utf-8')
+                    next_event = asyncio.create_task(anext(subscription))
+            finally:
+                if not next_event.done():
+                    next_event.cancel()
+                    with suppress(asyncio.CancelledError, StopAsyncIteration):
+                        await next_event
+                await subscription.aclose()
 
         return StreamingResponse(
             event_generator(),

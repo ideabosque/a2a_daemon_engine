@@ -334,6 +334,15 @@ class TestStreamingTaskManager:
         assert response.headers["Cache-Control"] == "no-cache"
         assert response.headers["X-Accel-Buffering"] == "no"
 
+        try:
+            chunk = await asyncio.wait_for(
+                anext(response.body_iterator),
+                timeout=0.2,
+            )
+            assert chunk == b": keep-alive\n\n"
+        finally:
+            await response.body_iterator.aclose()
+
 
 # ============================================================================
 # Push Notification Tests
