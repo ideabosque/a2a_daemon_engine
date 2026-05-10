@@ -269,6 +269,7 @@ Removed protocol surfaces:
 - `/rest/a2a-jsonrpc`
 - `/rest/a2a/{endpoint_id}/...`
 - `handlers/a2a_jsonrpc.py`
+- `handlers/a2a_sdk_compat.py`
 - direct `action=...` dispatch through `A2ADaemonEngine.a2a()`
 - lowercase/pre-v1 task-state fallback helpers
 

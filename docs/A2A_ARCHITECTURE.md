@@ -22,8 +22,9 @@ Removed surfaces:
 - `/rest/a2a-jsonrpc`
 - `/rest/a2a/{endpoint_id}/...` protocol-style REST routes
 - `handlers/a2a_jsonrpc.py`
-- direct `action=register_agent`, `action=assign_task`, and `action=route_message`
-  dispatch through `A2ADaemonEngine.a2a()`
+- `handlers/a2a_sdk_compat.py`
+- direct `action=...` dispatch (`register_agent`, `assign_task`,
+  `route_message`) through `A2ADaemonEngine.a2a()`
 
 ## Runtime Components
 

@@ -42,6 +42,8 @@ Required live checks:
 
 - Unit tests pass locally.
 - Live API tests pass against a running daemon.
-- A2A reference client or TCK validation passes against `POST /`.
+- A2A reference client or TCK validation passes against `POST /` and
+  `POST /v1` (TCK should target the SDK native dispatcher; the compatibility
+  endpoint can be exercised by the slash-style smoke tests in `test_api.py`).
 - Removed legacy paths return 404 or are otherwise unavailable:
   `/rest/a2a-jsonrpc` and `/rest/a2a/{endpoint_id}/...`.

@@ -2,7 +2,7 @@
 
 **Package Version:** 0.0.1
 **Status:** SDK v1.0 architecture in place; release validation pending
-**Last Updated:** 2026-05-09
+**Last Updated:** 2026-05-10
 
 A dedicated Agent-to-Agent (A2A) protocol daemon engine for distributed agent
 communication and multi-agent orchestration using the official A2A SDK server
@@ -33,14 +33,16 @@ Removed legacy surfaces:
 - `/rest/a2a/{endpoint_id}/...`
 - direct `action=...` dispatch through `A2ADaemonEngine.a2a()`
 - `handlers/a2a_jsonrpc.py`
+- `handlers/a2a_sdk_compat.py`
 
 ## Key Features
 
-- Native A2A SDK JSON-RPC at `/`
+- A2A SDK JSON-RPC over HTTP — slash-style compatibility at `POST /` and the
+  SDK native dispatcher at `POST /v1`
 - Public Agent Card at `/.well-known/agent-card.json`
 - SDK `AgentExecutor` integration
 - DynamoDB-backed SDK `TaskStore`
-- SSE task streaming and replay buffer support
+- SSE task streaming with `Last-Event-ID` replay buffer
 - GraphQL operations API for daemon data
 - JWT authentication for operations routes
 - HTTP and experimental gRPC transports
@@ -60,6 +62,9 @@ export REGION_NAME=us-east-1
 export AWS_ACCESS_KEY_ID=your_key
 export AWS_SECRET_ACCESS_KEY=your_secret
 export AUTH_PROVIDER=local
+# Required for AUTH_PROVIDER=local. Must be ≥ 32 chars and not a default/weak
+# value (e.g. CHANGEME, secret, password). See "Authentication" below.
+export JWT_SECRET_KEY=replace-me-with-a-strong-random-secret-of-32-or-more-chars
 ```
 
 ## Run
@@ -141,12 +146,13 @@ level.
 
 ## Deployment
 
-### Docker / Uvicorn
+### HTTP daemon
 
-```bash
-poetry run python -m a2a_daemon_engine.main
-# Listens on http://0.0.0.0:${PORT:-8001}
-```
+The HTTP daemon is started with the same command shown in [Run](#run); it
+listens on `http://0.0.0.0:${PORT:-8001}` and serves both the SDK protocol
+surface and the `/rest` operations app from a single process. For container
+deployments, package the project with `poetry install --without dev` and run
+the same command as the container entrypoint.
 
 ### AWS Lambda (serverless)
 
