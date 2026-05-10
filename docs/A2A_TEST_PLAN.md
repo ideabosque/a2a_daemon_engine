@@ -5,7 +5,8 @@
 Validate the v1-only A2A daemon structure:
 
 - SDK Agent Card discovery at `GET /.well-known/agent-card.json`
-- Native SDK JSON-RPC at `POST /`
+- JSON-RPC compatibility endpoint at `POST /` (slash-style methods)
+- SDK native JSON-RPC dispatcher at `POST /v1` (`SendMessage`, `GetTask`, `CancelTask`)
 - Task streaming at `GET /tasks/{task_id}/stream`
 - Operations endpoints under `/rest`
 - Serverless JSON-RPC dispatch through `A2ADaemonEngine.a2a(**event)`
@@ -32,9 +33,8 @@ pytest a2a_daemon_engine/tests/test_api.py -v
 Required live checks:
 
 - `GET /.well-known/agent-card.json` returns a valid v1 Agent Card.
-- `POST /` accepts `message/send`.
-- `POST /` accepts `tasks/get` for existing tasks.
-- `POST /` accepts `tasks/cancel` for cancellable tasks.
+- `POST /` accepts `message/send`, `tasks/get`, and `tasks/cancel`.
+- `POST /v1` accepts `SendMessage`, `GetTask`, and `CancelTask` (native v1).
 - `GET /rest/health` returns healthy status.
 - `POST /rest/{endpoint_id}/a2a_core_graphql` executes GraphQL requests.
 

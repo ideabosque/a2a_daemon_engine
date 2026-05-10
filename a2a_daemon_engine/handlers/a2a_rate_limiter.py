@@ -32,7 +32,6 @@ Usage:
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
 
 import pendulum
 
@@ -145,7 +144,7 @@ class SlidingWindow:
         """
         self.window_size = window_size
         self.max_requests = max_requests
-        self.requests: list[datetime] = []
+        self.requests: list[pendulum.DateTime] = []
         self._lock = asyncio.Lock()
 
     async def add_request(self) -> bool:
@@ -157,7 +156,7 @@ class SlidingWindow:
         """
         async with self._lock:
             now = pendulum.now("UTC")
-            cutoff = now - timedelta(seconds=self.window_size)
+            cutoff = now.subtract(seconds=self.window_size)
 
             # Remove old requests outside window
             self.requests = [r for r in self.requests if r > cutoff]
@@ -173,7 +172,7 @@ class SlidingWindow:
         """Get current request count in window."""
         async with self._lock:
             now = pendulum.now("UTC")
-            cutoff = now - timedelta(seconds=self.window_size)
+            cutoff = now.subtract(seconds=self.window_size)
             self.requests = [r for r in self.requests if r > cutoff]
             return len(self.requests)
 
@@ -183,14 +182,14 @@ class SlidingWindow:
             if self.requests:
                 self.requests.pop()
 
-    async def get_reset_time(self) -> datetime:
+    async def get_reset_time(self) -> pendulum.DateTime:
         """Get time when window will reset."""
         async with self._lock:
             if not self.requests:
                 return pendulum.now("UTC")
 
             oldest = min(self.requests)
-            return oldest + timedelta(seconds=self.window_size)
+            return oldest.add(seconds=self.window_size)
 
 
 class RateLimiter:

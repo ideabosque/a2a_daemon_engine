@@ -98,6 +98,9 @@ def sdk_response_to_dict(response: Any) -> dict[str, Any]:
             raise RuntimeError("protobuf JSON formatter is not available")
         return MessageToDict(response, preserving_proto_field_name=False)
 
+    # Pydantic v2 (preferred) and v1 fallback for non-protobuf SDK variants.
+    if hasattr(response, "model_dump"):
+        return response.model_dump(mode="json")
     if hasattr(response, "dict"):
         return response.dict()
 

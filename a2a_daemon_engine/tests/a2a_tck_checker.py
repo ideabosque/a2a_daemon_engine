@@ -411,9 +411,11 @@ class A2ATCKChecker:
 
         # Check that PushNotificationManager exists (import succeeds = manager available).
         try:
-            from a2a_daemon_engine.handlers.a2a_pushconfig import (  # noqa: F401
+            from a2a_daemon_engine.handlers.a2a_pushconfig import (
                 PushNotificationManager,
             )
+
+            assert PushNotificationManager is not None
 
             result = TCKTestResult(
                 name=test_name,

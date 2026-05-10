@@ -29,7 +29,6 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -112,7 +111,7 @@ class CircuitBreaker:
         self._state: dict[str, CircuitState] = {}
         self._failure_count: dict[str, int] = {}
         self._success_count: dict[str, int] = {}
-        self._last_failure_time: dict[str, datetime] = {}
+        self._last_failure_time: dict[str, pendulum.DateTime] = {}
         self._half_open_calls: dict[str, int] = {}
         self._lock = asyncio.Lock()
 
@@ -366,8 +365,8 @@ class HealthMonitor:
         # Check heartbeat
         if agent.last_heartbeat:
             last_beat = pendulum.parse(agent.last_heartbeat)
-            timeout = timedelta(seconds=self.heartbeat_timeout)
-            if pendulum.now("UTC") - last_beat > timeout:
+            elapsed = (pendulum.now("UTC") - last_beat).total_seconds()
+            if elapsed > self.heartbeat_timeout:
                 agent.status = HealthStatus.OFFLINE
                 return False
 
@@ -474,8 +473,8 @@ class HealthMonitor:
         # Check heartbeat timeout
         if agent.last_heartbeat:
             last_beat = pendulum.parse(agent.last_heartbeat)
-            timeout = timedelta(seconds=self.heartbeat_timeout)
-            if pendulum.now("UTC") - last_beat > timeout:
+            elapsed = (pendulum.now("UTC") - last_beat).total_seconds()
+            if elapsed > self.heartbeat_timeout:
                 if agent.status != HealthStatus.OFFLINE:
                     agent.status = HealthStatus.OFFLINE
                     self.logger.warning(f"Agent {agent_id} marked OFFLINE - heartbeat timeout")

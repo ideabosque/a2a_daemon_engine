@@ -211,3 +211,4 @@ test_data.json
 .claude
 .zed
 pytest-cache-*/
+AGENTS.md

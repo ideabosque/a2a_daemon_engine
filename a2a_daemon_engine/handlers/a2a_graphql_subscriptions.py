@@ -34,10 +34,13 @@ import logging
 from collections import defaultdict
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, field
-from datetime import timedelta
 from typing import Any
 
 import pendulum
+
+# Heartbeat timeout for the agent-presence monitor; agents that haven't sent a
+# heartbeat in this many seconds are marked offline.
+_HEARTBEAT_TIMEOUT_SECONDS = 60
 
 __author__ = "SilvaEngine Team"
 __version__ = "1.0.0"
@@ -380,12 +383,12 @@ class SubscriptionManager:
         while self._running:
             try:
                 now = pendulum.now("UTC")
-                timeout = timedelta(seconds=60)
 
                 # Check for stale agents
                 for agent_id, presence in list(self._agent_presence.items()):
                     last_beat = pendulum.parse(presence.last_heartbeat)
-                    if now - last_beat > timeout:
+                    elapsed = (now - last_beat).total_seconds()
+                    if elapsed > _HEARTBEAT_TIMEOUT_SECONDS:
                         # Mark as offline
                         self.update_agent_presence(agent_id, "offline", presence.capabilities)
 

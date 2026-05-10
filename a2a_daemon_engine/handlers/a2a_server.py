@@ -301,27 +301,11 @@ class A2AProtocolServer:
             agent_card=self.agent_card,
         )
 
-        # Create A2A Starlette application
-        # This exposes the agent at /.well-known/agent-card.json and handles JSON-RPC requests
-        # TODO: INTEGRATION - Mount A2A SDK app alongside existing FastAPI app
-        # Options for integration:
-        # 1. Separate port: Run A2A app on different port (e.g., 8002 for A2A, 8001 for REST)
-        #    - uvicorn.run(self.app, host="0.0.0.0", port=8002)
-        # 2. Mount as sub-app: Add A2A routes to existing FastAPI app
-        #    - In a2a_app.py: app.mount("/a2a-sdk", self.a2a_server.get_app())
-        # 3. Merge routes: Add A2A routes() to FastAPI router
-        #    - In a2a_router.py: router.routes.extend(Config.a2a_server.get_routes())
-        # Current status: Server initialized but not exposed to HTTP traffic
-        #
-        # GAP ANALYSIS (2.1): Protocol Persistence & Execution
-        # The current implementation uses InMemoryTaskStore which loses state on restart.
-        # Required Action:
-        # - Create DynamoDBTaskStore implementing a2a.server.tasks.TaskStore interface
-        # - Connect it to a2a_task.py models via GraphQL
-        # - Pass it to DefaultRequestHandler instead of InMemoryTaskStore
-        #
-        # See docs/A2A_GAP_ANALYSIS.md section 2.1 for details.
-
+        # Build the SDK Starlette app:
+        # - /.well-known/agent-card.json (auto-exposed by create_agent_card_routes)
+        # - POST /  : compatibility JSON-RPC endpoint accepting slash-style methods
+        # - POST /v1: SDK native dispatcher (with v0.3 method aliases enabled)
+        # The HTTP daemon mounts this as the primary app and FastAPI under /rest.
         jsonrpc_endpoint = A2AJsonRpcCompatibilityEndpoint(self.request_handler)
         self.app = Starlette(
             routes=[

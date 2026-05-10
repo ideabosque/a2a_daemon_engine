@@ -8,7 +8,8 @@ The daemon now uses the SDK Starlette application as the only HTTP A2A
 protocol surface:
 
 - `GET /.well-known/agent-card.json`
-- `POST /`
+- `POST /` (JSON-RPC compatibility endpoint: `message/send`, `tasks/get`, `tasks/cancel`)
+- `POST /v1` (SDK native JSON-RPC dispatcher: `SendMessage`, `GetTask`, `CancelTask`)
 - `GET /tasks/{task_id}/stream`
 
 The FastAPI app mounted at `/rest` is limited to operations endpoints:

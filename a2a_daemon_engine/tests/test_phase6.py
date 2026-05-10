@@ -194,9 +194,9 @@ class TestSDKHandler:
     def test_sdk_handler_is_primary(self):
         """Test that SDK DefaultRequestHandler is available."""
         try:
-            from a2a.server.request_handlers import DefaultRequestHandler  # noqa: F401
+            from a2a.server.request_handlers import DefaultRequestHandler
 
-            assert True
+            assert DefaultRequestHandler is not None
         except ImportError:
             pytest.skip("a2a SDK not available")
 

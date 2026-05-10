@@ -9,7 +9,8 @@ an operations surface only; it is not an alternate A2A protocol binding.
 | Path | Owner | Purpose |
 | --- | --- | --- |
 | `GET /.well-known/agent-card.json` | A2A SDK app | Public Agent Card discovery |
-| `POST /` | A2A SDK app | Native A2A JSON-RPC |
+| `POST /` | A2A SDK app (compatibility endpoint) | JSON-RPC with slash-style methods (`message/send`, `tasks/get`, `tasks/cancel`) |
+| `POST /v1` | A2A SDK app (native dispatcher) | JSON-RPC with native v1 methods (`SendMessage`, `GetTask`, `CancelTask`); `enable_v0_3_compat=True` |
 | `GET /tasks/{task_id}/stream` | SDK app + SSE manager | Task event stream and replay |
 | `GET /rest/health` | FastAPI operations app | Health check |
 | `GET /rest/me` | FastAPI operations app | Authenticated user claims |
