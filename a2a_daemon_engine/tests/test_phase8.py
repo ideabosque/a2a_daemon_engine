@@ -180,6 +180,105 @@ class TestSSEEventQueue:
         # Buffer should only contain last 5 events
         assert len(queue._event_buffers.get("task-123", [])) <= 5
 
+    @pytest.mark.asyncio
+    async def test_none_sentinel_not_yielded(self, mock_event_queue):
+        """Test that close_task() sentinel (None) is not yielded to subscribers."""
+        # Subscribe before putting the event so we don't miss it
+        received = []
+
+        async def collect():
+            async for e in mock_event_queue.subscribe("task-456"):
+                received.append(e)
+
+        task = asyncio.create_task(collect())
+
+        # Give the subscription time to register
+        await asyncio.sleep(0.05)
+
+        # Now put the event
+        event = SSEEvent(
+            event_type="task_status",
+            data={"task_id": "task-456", "state": "WORKING"},
+        )
+        await mock_event_queue.put("task-456", event)
+
+        # Give the subscriber time to receive the event
+        await asyncio.sleep(0.05)
+
+        # Close the task — this puts a None sentinel
+        await mock_event_queue.close_task("task-456")
+
+        # Give the subscriber time to process the sentinel
+        try:
+            await asyncio.wait_for(task, timeout=0.5)
+        except asyncio.TimeoutError:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        # None should never appear in the received events
+        assert all(e is not None for e in received)
+        assert len(received) >= 1
+        assert received[0].event_type == "task_status"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_stale_buffers(self, mock_task_store, mock_logger):
+        """Test that cleanup_stale_buffers removes expired buffers."""
+        queue = SSEEventQueue(
+            task_store=mock_task_store,
+            max_events_per_task=100,
+            buffer_ttl=0.01,  # Very short TTL (10ms)
+            logger=mock_logger,
+        )
+
+        # Put an event — this sets the timestamp
+        event = SSEEvent(event_type="task_status", data={"task_id": "stale-task"})
+        await queue.put("stale-task", event)
+        assert "stale-task" in queue._event_buffers
+
+        # Wait for the TTL to expire
+        await asyncio.sleep(0.05)
+
+        # Cleanup should remove the stale buffer
+        removed = await queue.cleanup_stale_buffers()
+        assert removed == 1
+        assert "stale-task" not in queue._event_buffers
+
+    @pytest.mark.asyncio
+    async def test_cleanup_does_not_remove_active_buffers(self, mock_event_queue):
+        """Test that cleanup_stale_buffers does not remove buffers with subscribers."""
+        # Subscribe to keep the buffer active
+        subscribe_task = asyncio.create_task(
+            self._collect_events(mock_event_queue, "active-task", max_events=1)
+        )
+
+        # Give the subscription time to register
+        await asyncio.sleep(0.05)
+
+        event = SSEEvent(event_type="task_status", data={"index": 0})
+        await mock_event_queue.put("active-task", event)
+
+        # Try cleanup — should not remove because there is an active subscriber
+        removed = await mock_event_queue.cleanup_stale_buffers()
+        assert removed == 0
+
+        subscribe_task.cancel()
+        try:
+            await subscribe_task
+        except asyncio.CancelledError:
+            pass
+
+    async def _collect_events(self, queue, task_id, max_events=1):
+        """Helper: collect up to max_events from a subscription."""
+        collected = []
+        async for e in queue.subscribe(task_id):
+            collected.append(e)
+            if len(collected) >= max_events:
+                break
+        return collected
+
 
 class TestStreamingTaskManager:
     """Test streaming task manager."""
@@ -216,6 +315,24 @@ class TestStreamingTaskManager:
         )
 
         mock_logger.info.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_sse_response_includes_heartbeat(self, mock_event_queue, mock_logger):
+        """Test that SSE response generator emits keep-alive comments."""
+        manager = StreamingTaskManager(
+            event_queue=mock_event_queue,
+            heartbeat_interval=0.05,  # Very short interval for testing
+            logger=mock_logger,
+        )
+
+        # Create the SSE response
+        response = manager.create_sse_response("task-hb")
+
+        # The response is a StreamingResponse; we can iterate the generator
+        # by accessing the body_iterator
+        assert response.media_type == "text/event-stream"
+        assert response.headers["Cache-Control"] == "no-cache"
+        assert response.headers["X-Accel-Buffering"] == "no"
 
 
 # ============================================================================

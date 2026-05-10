@@ -283,10 +283,10 @@ Removed protocol surfaces:
 | Task persistence | Done | `DynamoDBA2ATaskStore` implements SDK task-store methods and maps persisted states to v1 names. |
 | Operations API | Done | `/rest` exposes health, identity, endpoint info, and GraphQL only. |
 | gRPC adapter | Experimental | JSON-over-gRPC remains available for transport experimentation. |
+| SSE infra fixes | Bug | `a2a_sse.py` has a `None` sentinel leak in `subscribe()`, no keep-alive heartbeat, no buffer cleanup, and a fragile route mutation. Not related to Phase 10 core engine work. |
+| Dual event paths unconnected | Bug | `SSEEventQueue` and SDK `EventQueue` are parallel, disconnected paths. Phase 10 streaming bridge will feed both; the SSE endpoint will also be needed for `SubscribeToTask` reconnection. |
 | AI engine integration (non-streaming) | Phase 10 | Bridge utility to invoke `ai_agent_core_engine` LLM handlers for `SendMessage` requests with full persistence. |
 | AI engine integration (streaming) | Phase 10 | Streaming bridge using `threading.Queue` to emit chunks to both SDK `EventQueue` and `SSEEventQueue`. |
-| SSE fixes | Phase 10 | Fix `None` sentinel leak, add heartbeat, add buffer cleanup, fix route mutation pattern. |
-| Dual-path streaming | Phase 10 | Each streaming chunk emitted to both SDK `EventQueue` and `SSEEventQueue`. |
 
 ## Phase 10: ai_agent_core_engine Integration
 
@@ -393,59 +393,46 @@ as they arrive.
 | 10.3.5 | Thread lifecycle management — Ensure the background `threading.Thread` is daemonized, has a timeout (default 120s matching the core engine), and that `stream_event` is always set on error or cancellation to prevent queue-drain hangs. |
 | 10.3.6 | Persist thread, run, and message records after streaming completes — same pattern as 10.2.4 but deferred until `stream_event.wait()` returns. |
 
-#### 10.4 SSE Fixes
-
-Fix existing issues in `a2a_sse.py` identified during the integration review.
-
-| Sub-task | Description |
-| --- | --- |
-| 10.4.1 | Fix `subscribe()` yielding `None` sentinel — add `event is not None` guard before `yield` in the `try` block. |
-| 10.4.2 | Add SSE heartbeat — emit `: keep-alive\n\n` comments every 15 seconds in `create_sse_response()` to prevent intermediaries from closing idle connections. |
-| 10.4.3 | Add TTL-based cleanup for `_event_buffers` — completed tasks leave ring buffers in memory indefinitely. Add a cleanup coroutine or task-close callback. |
-| 10.4.4 | Replace direct `app.routes` mutation in `create_sse_endpoints()` with `app.add_route()` or route-list rebuild for robustness. |
-
-#### 10.5 Dual-Path Streaming Emission
+#### 10.4 Dual-Path Streaming Emission
 
 Ensure every chunk emitted by the streaming bridge reaches both A2A
 protocol consumers and SSE reconnection subscribers.
 
 | Sub-task | Description |
 | --- | --- |
-| 10.5.1 | In the streaming bridge, emit each text chunk into the **SDK `EventQueue`** as an A2A `Message` (via `_emit_event` + `_agent_text_message`). This serves `SendStreamingMessage` clients. |
-| 10.5.2 | In the streaming bridge, emit each text chunk into the **`SSEEventQueue`** via `streaming_manager.emit_task_artifact()`. This serves `SubscribeToTask` and `/tasks/{task_id}/stream` reconnection clients. |
-| 10.5.3 | On stream completion, emit `COMPLETED` status to both the SDK `EventQueue` and `SSEEventQueue.emit_task_status()`. On error, emit `FAILED`. |
-| 10.5.4 | On `INPUT_REQUIRED` or `AUTH_REQUIRED` transitions from the core engine, map those to the corresponding A2A task states. |
+| 10.4.1 | In the streaming bridge, emit each text chunk into the **SDK `EventQueue`** as an A2A `Message` (via `_emit_event` + `_agent_text_message`). This serves `SendStreamingMessage` clients. |
+| 10.4.2 | In the streaming bridge, emit each text chunk into the **`SSEEventQueue`** via `streaming_manager.emit_task_artifact()`. This serves `SubscribeToTask` and `/tasks/{task_id}/stream` reconnection clients. |
+| 10.4.3 | On stream completion, emit `COMPLETED` status to both the SDK `EventQueue` and `SSEEventQueue.emit_task_status()`. On error, emit `FAILED`. |
+| 10.4.4 | On `INPUT_REQUIRED` or `AUTH_REQUIRED` transitions from the core engine, map those to the corresponding A2A task states. |
 
-#### 10.6 Configuration
-
-| Sub-task | Description |
-| --- | --- |
-| 10.6.1 | Add `ai_agent_core_setting` dict to `Config` holding module paths, class names, and connection parameters needed to invoke the core engine's AI agent handler. |
-| 10.6.2 | Document required settings in `AGENTS.md` (e.g., `A2A_AI_AGENT_MODULE`, `A2A_AI_AGENT_CLASS`, `A2A_DEFAULT_AGENT_UUID`). |
-| 10.6.3 | Add environment-variable overrides for dev vs. production (e.g., disable streaming for local dev, set `stream_timeout` defaults, allow non-streaming-only mode). |
-
-#### 10.7 Tests
+#### 10.5 Configuration
 
 | Sub-task | Description |
 | --- | --- |
-| 10.7.1 | `tests/test_phase10.py` — Unit tests for `resolve_agent`, `load_agent_handler`, `create_core_engine_context`, and `build_input_messages` with mocked core engine. |
-| 10.7.2 | Non-streaming integration test — call `execute_ai_agent_non_streaming` with a mock handler returning `final_output`, verify the A2A `Message` and `COMPLETED` status are emitted correctly. |
-| 10.7.3 | Streaming integration test — call `execute_ai_agent_streaming` with a mock `threading.Queue` producing chunks, verify that: (a) each chunk is emitted to SDK `EventQueue`, (b) each chunk is broadcast to `SSEEventQueue`, (c) `COMPLETED` or `FAILED` is the final state. |
-| 10.7.4 | Test SSE fixes: `None` sentinel guard, heartbeat emission, TTL cleanup. |
-| 10.7.5 | Live API test — send `SendMessage` (non-streaming) to a running daemon and verify a single complete response is returned. |
-| 10.7.6 | Live API test — send `SendStreamingMessage` to a running daemon and verify chunked text responses arrive over SSE. |
-| 10.7.7 | Test error paths: agent-not-found, LLM timeout, LLM error, invalid `final_output` — verify `FAILED` state propagation for both non-streaming and streaming paths. |
-| 10.7.8 | Test persistence — verify thread, run, and message records are created in DynamoDB after both non-streaming and streaming invocations. |
+| 10.5.1 | Add `ai_agent_core_setting` dict to `Config` holding module paths, class names, and connection parameters needed to invoke the core engine's AI agent handler. |
+| 10.5.2 | Document required settings in `AGENTS.md` (e.g., `A2A_AI_AGENT_MODULE`, `A2A_AI_AGENT_CLASS`, `A2A_DEFAULT_AGENT_UUID`). |
+| 10.5.3 | Add environment-variable overrides for dev vs. production (e.g., disable streaming for local dev, set `stream_timeout` defaults, allow non-streaming-only mode). |
+
+#### 10.6 Tests
+
+| Sub-task | Description |
+| --- | --- |
+| 10.6.1 | `tests/test_phase10.py` — Unit tests for `resolve_agent`, `load_agent_handler`, `create_core_engine_context`, and `build_input_messages` with mocked core engine. |
+| 10.6.2 | Non-streaming integration test — call `execute_ai_agent_non_streaming` with a mock handler returning `final_output`, verify the A2A `Message` and `COMPLETED` status are emitted correctly. |
+| 10.6.3 | Streaming integration test — call `execute_ai_agent_streaming` with a mock `threading.Queue` producing chunks, verify that: (a) each chunk is emitted to SDK `EventQueue`, (b) each chunk is broadcast to `SSEEventQueue`, (c) `COMPLETED` or `FAILED` is the final state. |
+| 10.6.4 | Live API test — send `SendMessage` (non-streaming) to a running daemon and verify a single complete response is returned. |
+| 10.6.5 | Live API test — send `SendStreamingMessage` to a running daemon and verify chunked text responses arrive over SSE. |
+| 10.6.6 | Test error paths: agent-not-found, LLM timeout, LLM error, invalid `final_output` — verify `FAILED` state propagation for both non-streaming and streaming paths. |
+| 10.6.7 | Test persistence — verify thread, run, and message records are created in DynamoDB after both non-streaming and streaming invocations. |
 
 ### Implementation Order
 
-1. **10.4** (SSE fixes) — Standalone; no dependency on core engine.
-2. **10.1** (Bridge foundation) — Agent resolution, handler loading, context assembly, message building.
-3. **10.2** (Non-streaming integration) — End-to-end LLM invocation with full persistence and error handling.
-4. **10.3** (Streaming integration) — Adds chunk-by-chunk emission on top of the bridge foundation.
-5. **10.5** (Dual-path emission) — Ensures both SSE and SDK paths receive streaming chunks.
-6. **10.6** (Configuration) — Factor out hardcoded values.
-7. **10.7** (Tests) — Written incrementally alongside each sub-task.
+1. **10.1** (Bridge foundation) — Agent resolution, handler loading, context assembly, message building.
+2. **10.2** (Non-streaming integration) — End-to-end LLM invocation with full persistence and error handling.
+3. **10.3** (Streaming integration) — Adds chunk-by-chunk emission on top of the bridge foundation.
+4. **10.4** (Dual-path emission) — Ensures both SSE and SDK paths receive streaming chunks.
+5. **10.5** (Configuration) — Factor out hardcoded values.
+6. **10.6** (Tests) — Written incrementally alongside each sub-task.
 
 ### Key Design Decisions
 
@@ -457,6 +444,22 @@ protocol consumers and SSE reconnection subscribers.
 | `threading.Queue` to `asyncio` adapter via `run_in_executor` | The core engine's `ask_model` runs in a `threading.Thread` with `Queue`. The A2A executor is `async`. `run_in_executor` bridges without blocking the event loop. |
 | Dual emission (SDK `EventQueue` + `SSEEventQueue`) | The SDK `EventQueue` serves `SendStreamingMessage` responses. The `SSEEventQueue` serves long-lived `SubscribeToTask` subscribers who reconnected with `Last-Event-ID`. Both need the same data. |
 | Persist thread/run/message records in both paths | The core engine creates thread, run, and message records in DynamoDB. The daemon must do the same so conversation history is queryable via the `/rest/{endpoint_id}/a2a_core_graphql` endpoint regardless of whether the client used streaming. |
+
+## SSE Infrastructure Bugs
+
+These are pre-existing defects in `a2a_sse.py` that were identified during the
+Phase 10 review but are independent of the core engine integration. They should
+be fixed as a separate housekeeping effort using the existing `test_phase8.py`
+test harness.
+
+| Bug | Description | Fix |
+| --- | --- | --- |
+| `subscribe()` yields `None` sentinel | `close_task()` puts `None` as a sentinel to signal end-of-stream, but `subscribe()` yields `None` to the consumer before the `break` check in `create_sse_response()`. This emits a `None` SSE event to clients. | Add `if event is None: break` before `yield event` in `subscribe()`, or change the yield to skip `None`. |
+| No heartbeat/keep-alive | SSE connections idle for long periods. Without periodic `: comment\n\n` lines, load balancers and proxies may close the connection. | Add a periodic heartbeat (e.g. every 15s) in `create_sse_response()` by interleaving `: keep-alive\n\n` comments in the async generator. |
+| `_event_buffers` memory growth | Ring buffers grow per `task_id` with no TTL or cleanup. Completed or abandoned tasks stay in memory indefinitely since `close_task()` is never called from anywhere in the codebase. | Add a TTL-based cleanup coroutine that removes buffers older than a configurable threshold, or call `close_task()` when a task transitions to a terminal state. |
+| `create_sse_endpoints` mutates `app.routes` | Directly appending to `app.routes` is fragile and may not work with all Starlette routing configurations. | Use `app.add_route()` or rebuild the route list instead. |
+| Dual event paths unconnected | `SSEEventQueue`/`StreamingTaskManager` and the SDK's `EventQueue` are parallel, disconnected paths. The executor only emits into the SDK `EventQueue`; the custom `/tasks/{task_id}/stream` SSE endpoint only serves events manually pushed into `SSEEventQueue`. | This is resolved by Phase 10 dual-path streaming (10.4), which will feed both queues from the bridge. |
+| Broad `except Exception` in `put()` | `_subscriptions` dict mutation catches all `Exception` when putting to subscriber queues, silently swallowing errors that might indicate real problems. | Narrow the catch to `asyncio.CancelledError` or specific queue-closed exceptions; log unexpected errors rather than silently discarding them. |
 
 ## Release Gates
 
@@ -477,4 +480,4 @@ protocol consumers and SSE reconnection subscribers.
 | 7 | Streaming and multi-turn (SSE, INPUT_REQUIRED, AUTH_REQUIRED, push config) | Complete | `a2a_sse.py`, `a2a_pushconfig.py`, `a2a_executor.py` |
 | 8 | Production hardening (extended cards, telemetry, TCK, security) | Complete | `a2a_extended_card.py`, `a2a_telemetry.py`, `a2a_tck_checker.py` |
 | 9 | Advanced extensions (gRPC, subscriptions, health, rate limit, cancellation, passport, cost) | Complete | `a2a_grpc.py`, `a2a_graphql_subscriptions.py`, `a2a_health_monitor.py`, `a2a_rate_limiter.py`, `a2a_cancellation.py`, `a2a_secure_passport.py`, `a2a_cost_extension.py` |
-| 10 | ai_agent_core_engine integration (bridge utility, non-streaming + streaming LLM, SSE fixes) | Planned | Planned: `a2a_ai_agent_utility.py`, updates to `a2a_executor.py`, `a2a_sse.py` |
+| 10 | ai_agent_core_engine integration (bridge utility, non-streaming + streaming LLM, dual-path emission) | Planned | Planned: `a2a_ai_agent_utility.py`, updates to `a2a_executor.py`, `a2a_sse.py` |

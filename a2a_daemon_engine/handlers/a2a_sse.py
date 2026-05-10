@@ -24,6 +24,7 @@ Usage:
 import asyncio
 import json
 import logging
+import time
 from collections import deque
 from collections.abc import AsyncIterable
 from typing import Any
@@ -32,7 +33,13 @@ import pendulum
 from starlette.responses import StreamingResponse
 
 __author__ = "SilvaEngine Team"
-__version__ = "1.0.0"
+__version__ = "1.0.1"
+
+# Default interval (seconds) between SSE keep-alive comments.
+SSE_HEARTBEAT_INTERVAL = 15
+
+# Default TTL (seconds) for per-task event buffers after the task ends.
+SSE_BUFFER_TTL = 3600  # 1 hour
 
 
 class SSEEvent:
@@ -62,6 +69,9 @@ class SSEEvent:
         self.data = data
         self.event_id = event_id or f"evt-{pendulum.now('UTC').timestamp()}"
         self.retry_ms = retry_ms
+
+        # Track when this event was created for buffer TTL.
+        self.created_at = time.monotonic()
 
     def to_sse_format(self) -> str:
         """Convert event to SSE format string."""
@@ -93,12 +103,14 @@ class SSEEventQueue:
     - Event-driven streaming to clients
     - Last-Event-ID support for reconnections
     - Ring buffer of last 100 events per task
+    - TTL-based cleanup of stale event buffers
     """
 
     def __init__(
         self,
         task_store: Any,
         max_events_per_task: int = 100,
+        buffer_ttl: float = SSE_BUFFER_TTL,
         logger: logging.Logger | None = None
     ):
         """
@@ -107,14 +119,19 @@ class SSEEventQueue:
         Args:
             task_store: TaskStore instance for persistence
             max_events_per_task: Maximum events to retain per task (default: 100)
+            buffer_ttl: Time in seconds to keep buffers after last event (default: 3600)
             logger: Optional logger instance
         """
         self.task_store = task_store
         self.max_events_per_task = max_events_per_task
+        self.buffer_ttl = buffer_ttl
         self.logger = logger or logging.getLogger(__name__)
 
         # Event buffer: task_id -> deque of events (ring buffer)
         self._event_buffers: dict[str, deque] = {}
+
+        # Timestamp of the last event added per task, for TTL cleanup.
+        self._event_timestamps: dict[str, float] = {}
 
         # Active subscriptions: task_id -> set of queues
         self._subscriptions: dict[str, set] = {}
@@ -137,6 +154,7 @@ class SSEEventQueue:
 
             # Add to ring buffer
             self._event_buffers[task_id].append(event)
+            self._event_timestamps[task_id] = time.monotonic()
 
             # Broadcast to active subscribers
             if task_id in self._subscriptions:
@@ -144,7 +162,14 @@ class SSEEventQueue:
                 for queue in self._subscriptions[task_id]:
                     try:
                         await queue.put(event)
+                    except asyncio.CancelledError:
+                        dead_queues.add(queue)
                     except Exception:
+                        self.logger.warning(
+                            "Failed to put event to subscriber queue for task %s",
+                            task_id,
+                            exc_info=True,
+                        )
                         dead_queues.add(queue)
 
                 # Remove dead queues
@@ -167,10 +192,10 @@ class SSEEventQueue:
             last_event_id: Last event ID received (for replay/reconnect)
 
         Yields:
-            SSEEvent objects
+            SSEEvent objects (None sentinel is NOT yielded)
         """
         # Create subscription queue
-        queue: asyncio.Queue[SSEEvent] = asyncio.Queue()
+        queue: asyncio.Queue[SSEEvent | None] = asyncio.Queue()
 
         async with self._lock:
             # Initialize subscription set
@@ -193,9 +218,11 @@ class SSEEventQueue:
                     )
 
         try:
-            # Yield events from queue
+            # Yield events from queue; skip None sentinel.
             while True:
                 event = await queue.get()
+                if event is None:
+                    break
                 yield event
         except asyncio.CancelledError:
             # Client disconnected
@@ -207,7 +234,7 @@ class SSEEventQueue:
                     self._subscriptions[task_id].discard(queue)
 
     async def close_task(self, task_id: str) -> None:
-        """Close all subscriptions for a task."""
+        """Close all subscriptions for a task and remove its buffer."""
         async with self._lock:
             if task_id in self._subscriptions:
                 # Signal end to all subscribers
@@ -215,8 +242,38 @@ class SSEEventQueue:
                     await queue.put(None)  # Sentinel value
                 del self._subscriptions[task_id]
 
-            if task_id in self._event_buffers:
-                del self._event_buffers[task_id]
+            self._event_buffers.pop(task_id, None)
+            self._event_timestamps.pop(task_id, None)
+
+    async def cleanup_stale_buffers(self) -> int:
+        """
+        Remove event buffers whose TTL has expired and that have no active
+        subscribers.
+
+        Returns:
+            Number of buffers removed.
+        """
+        now = time.monotonic()
+        removed = 0
+
+        async with self._lock:
+            stale_tasks = [
+                task_id
+                for task_id, ts in self._event_timestamps.items()
+                if (now - ts) > self.buffer_ttl
+                and task_id not in self._subscriptions
+            ]
+            for task_id in stale_tasks:
+                self._event_buffers.pop(task_id, None)
+                self._event_timestamps.pop(task_id, None)
+                removed += 1
+
+        if removed:
+            self.logger.info(
+                "Cleaned up %d stale SSE event buffer(s)", removed
+            )
+
+        return removed
 
 
 class StreamingTaskManager:
@@ -229,6 +286,7 @@ class StreamingTaskManager:
     def __init__(
         self,
         event_queue: SSEEventQueue,
+        heartbeat_interval: float = SSE_HEARTBEAT_INTERVAL,
         logger: logging.Logger | None = None
     ):
         """
@@ -236,9 +294,11 @@ class StreamingTaskManager:
 
         Args:
             event_queue: SSE event queue for broadcasting
+            heartbeat_interval: Seconds between keep-alive comments (default: 15)
             logger: Optional logger instance
         """
         self.event_queue = event_queue
+        self.heartbeat_interval = heartbeat_interval
         self.logger = logger or logging.getLogger(__name__)
 
     async def emit_task_status(
@@ -357,6 +417,9 @@ class StreamingTaskManager:
         """
         Create Starlette StreamingResponse for SSE.
 
+        Includes periodic keep-alive comments to prevent intermediaries
+        from closing idle connections.
+
         Args:
             task_id: Task to stream
             last_event_id: Last event ID for replay
@@ -364,11 +427,20 @@ class StreamingTaskManager:
         Returns:
             StreamingResponse configured for SSE
         """
+        heartbeat_interval = self.heartbeat_interval
+
         async def event_generator():
+            last_heartbeat = time.monotonic()
             async for event in self.event_queue.subscribe(task_id, last_event_id):
                 if event is None:
                     break
+                # Emit keep-alive comment if enough time has passed.
+                now = time.monotonic()
+                if now - last_heartbeat >= heartbeat_interval:
+                    yield b": keep-alive\n\n"
+                    last_heartbeat = now
                 yield event.to_sse_format().encode('utf-8')
+                last_heartbeat = time.monotonic()
 
         return StreamingResponse(
             event_generator(),
@@ -385,6 +457,9 @@ def create_sse_endpoints(app: Any, streaming_manager: StreamingTaskManager) -> N
     """
     Register SSE endpoints on FastAPI/Starlette app.
 
+    Uses app.add_route() for robustness instead of mutating app.routes
+    directly.
+
     Args:
         app: FastAPI/Starlette application
         streaming_manager: StreamingTaskManager instance
@@ -398,16 +473,21 @@ def create_sse_endpoints(app: Any, streaming_manager: StreamingTaskManager) -> N
 
         return streaming_manager.create_sse_response(task_id, last_event_id)
 
-    # Add route (handle both list attribute and callable method)
-    routes = app.routes() if callable(app.routes) else app.routes
-    routes.append(
-        Route("/tasks/{task_id}/stream", endpoint=subscribe_to_task)
-    )
+    route = Route("/tasks/{task_id}/stream", endpoint=subscribe_to_task)
+
+    # Starlette apps expose .routes as a list; append the new route.
+    if hasattr(app, 'add_route'):
+        app.add_route("/tasks/{task_id}/stream", subscribe_to_task)
+    else:
+        # Fallback for Starlette instances that use a routes list.
+        app.routes.append(route)
 
 
 __all__ = [
     "SSEEvent",
     "SSEEventQueue",
     "StreamingTaskManager",
-    "create_sse_endpoints"
+    "create_sse_endpoints",
+    "SSE_HEARTBEAT_INTERVAL",
+    "SSE_BUFFER_TTL",
 ]
