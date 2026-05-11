@@ -82,6 +82,12 @@ async def _emit_event(event_queue: EventQueue, event: Any) -> None:
 
 def _context_get(request_context: RequestContext, key: str, default: Any = None) -> Any:
     """Read custom context values across supported A2A SDK RequestContext versions."""
+    if request_context is None:
+        return default
+
+    if isinstance(request_context, dict):
+        return request_context.get(key, default)
+
     if hasattr(request_context, "get"):
         return request_context.get(key, default)
 
@@ -90,6 +96,19 @@ def _context_get(request_context: RequestContext, key: str, default: Any = None)
     if isinstance(state, dict):
         return state.get(key, default)
 
+    return default
+
+
+def _context_get_any(
+    request_context: RequestContext | None,
+    *keys: str,
+    default: Any = None,
+) -> Any:
+    """Return the first present custom context value across naming variants."""
+    for key in keys:
+        value = _context_get(request_context, key, default=None)
+        if value is not None:
+            return value
     return default
 
 
@@ -108,6 +127,36 @@ def _dict_get_any(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
         if key in data:
             return data[key]
     return default
+
+
+def _streaming_requested(
+    request_context: RequestContext,
+    task_data: dict[str, Any],
+) -> bool:
+    """Determine whether the client requested streaming."""
+    context_flag = _context_get_any(
+        request_context,
+        "stream",
+        "streaming",
+        "streaming_enabled",
+        "streamingEnabled",
+    )
+    if context_flag is not None:
+        return _truthy_option(context_flag)
+
+    task_flag = _dict_get_any(
+        task_data,
+        "stream",
+        "streaming",
+        "streaming_enabled",
+        "streamingEnabled",
+        default=None,
+    )
+    if task_flag is not None:
+        return _truthy_option(task_flag)
+
+    method = _context_get_any(request_context, "method", "rpc_method", default=None)
+    return method in {"SendStreamingMessage", "sendStreamingMessage"}
 
 
 class A2ADaemonExecutor(AgentExecutor):
@@ -190,7 +239,9 @@ class A2ADaemonExecutor(AgentExecutor):
                     partition_key, request_context, event_queue
                 )
             elif operation == "message_response":
-                await self._handle_message_response(user_input, event_queue)
+                await self._handle_message_response(
+                    user_input, event_queue, partition_key, request_context
+                )
             elif operation == "message_routing":
                 await self._handle_message_routing(
                     partition_key, request_context, event_queue
@@ -212,10 +263,47 @@ class A2ADaemonExecutor(AgentExecutor):
         self,
         user_input: str,
         event_queue: EventQueue,
+        partition_key: str = "default#default",
+        request_context: RequestContext | None = None,
     ) -> None:
         """
         Handle a plain A2A message/send request as a message-only interaction.
+
+        Phase 10: When ai_agent_core_engine is available and configured,
+        invokes the LLM handler for a real response.
         """
+        from .a2a_ai_agent_utility import (
+            AI_CORE_AVAILABLE,
+            execute_ai_agent_non_streaming,
+        )
+
+        if AI_CORE_AVAILABLE and self.config and getattr(self.config, "a2a_core", None):
+            agent_uuid = _context_get_any(
+                request_context,
+                "agent_uuid",
+                "agentId",
+                "agent_id",
+            )
+            try:
+                result = await execute_ai_agent_non_streaming(
+                    partition_key=partition_key,
+                    agent_uuid=agent_uuid,
+                    user_query=user_input,
+                    logger=self.logger,
+                )
+                if result.error:
+                    await _emit_event(
+                        event_queue,
+                        _agent_text_message(f"AI agent error: {result.error}"),
+                    )
+                else:
+                    await _emit_event(event_queue, _agent_text_message(result.content))
+                return
+            except Exception as e:
+                self.logger.warning(
+                    f"Phase 10 message_response failed, falling back to static: {e}"
+                )
+
         await _emit_event(
             event_queue,
             _agent_text_message(f"A2A Daemon received: {user_input}"),
@@ -231,6 +319,8 @@ class A2ADaemonExecutor(AgentExecutor):
         Handle task execution operation.
 
         Routes task to appropriate agent via existing handlers.
+        Phase 10: When ai_agent_core_engine is available, uses the bridge
+        utility for LLM invocation with streaming support.
         """
         from .a2a_handlers import handle_task_assignment
 
@@ -264,9 +354,90 @@ class A2ADaemonExecutor(AgentExecutor):
             )
             return
 
-        # TODO: Integrate ai_agent_core_engine here via a narrow helper such as
-        # a2a_ai_agent_utility.execute_ai_agent_task(...), then map AI Core
-        # results/states back into A2A message/task events.
+        # Phase 10: attempt ai_agent_core_engine bridge when available
+        from .a2a_ai_agent_utility import (
+            AI_CORE_AVAILABLE,
+            execute_ai_agent_non_streaming,
+            execute_ai_agent_streaming,
+        )
+
+        if AI_CORE_AVAILABLE and self.config and getattr(self.config, "a2a_core", None):
+            agent_uuid = _context_get_any(
+                request_context,
+                "agent_uuid",
+                "agentId",
+                "agent_id",
+            )
+            thread_uuid = _context_get_any(
+                request_context,
+                "thread_uuid",
+                "threadId",
+                "thread_id",
+            )
+            run_uuid = _context_get_any(
+                request_context,
+                "run_uuid",
+                "runId",
+                "run_id",
+            )
+            streaming = _streaming_requested(request_context, task_data)
+            if streaming and not getattr(self.config, "a2a_streaming_enabled", True):
+                self.logger.info(
+                    "Phase 10 streaming requested but disabled; using non-streaming."
+                )
+                streaming = False
+
+            try:
+                if streaming:
+                    result = await execute_ai_agent_streaming(
+                        partition_key=partition_key,
+                        agent_uuid=agent_uuid,
+                        user_query=user_input or task_data.get("description", ""),
+                        event_queue=event_queue,
+                        streaming_manager=self.streaming_manager,
+                        thread_uuid=thread_uuid,
+                        run_uuid=run_uuid,
+                        logger=self.logger,
+                    )
+                    if result.error:
+                        await _emit_event(
+                            event_queue,
+                            _agent_text_message(f"AI agent error: {result.error}"),
+                        )
+                    return
+                else:
+                    # Emit working status before LLM call
+                    await _emit_event(event_queue, _status_update_event(_task_state("WORKING")))
+                    result = await execute_ai_agent_non_streaming(
+                        partition_key=partition_key,
+                        agent_uuid=agent_uuid,
+                        user_query=user_input or task_data.get("description", ""),
+                        thread_uuid=thread_uuid,
+                        run_uuid=run_uuid,
+                        logger=self.logger,
+                    )
+
+                if result.error:
+                    await _emit_event(
+                        event_queue,
+                        _agent_text_message(f"AI agent error: {result.error}"),
+                    )
+                    await _emit_event(
+                        event_queue, _status_update_event(_task_state("FAILED"))
+                    )
+                else:
+                    await _emit_event(event_queue, _agent_text_message(result.content))
+                    await _emit_event(
+                        event_queue, _status_update_event(_task_state("COMPLETED"))
+                    )
+                return
+            except Exception as e:
+                self.logger.warning(
+                    f"Phase 10 task_execution failed, falling back to legacy: {e}",
+                    exc_info=True,
+                )
+
+        # Legacy fallback path
         self.logger.info(f"Assigning task: {task_data.get('id', 'new')}")
 
         # Emit working status

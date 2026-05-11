@@ -149,6 +149,14 @@ class Config:
     jwks_endpoint: AnyUrl | None = None
     jwks_cache_ttl: int | None = None  # seconds
 
+    # Phase 10: ai_agent_core_engine bridge settings
+    a2a_ai_agent_module: str | None = None
+    a2a_ai_agent_class: str | None = None
+    a2a_default_agent_uuid: str | None = None
+    a2a_stream_timeout: float = 120.0
+    a2a_streaming_enabled: bool = True
+    phase10_available: bool = False
+
     @classmethod
     def initialize(cls, logger: logging.Logger, **setting: dict[str, Any]) -> None:
         """
@@ -167,6 +175,7 @@ class Config:
             cls._initialize_aws_services(logger, setting)
             if setting.get("initialize_tables"):
                 cls._initialize_tables(logger)
+            cls._evaluate_phase10_availability()
             logger.info("Configuration initialized successfully.")
         except Exception as e:
             logger.exception("Failed to initialize configuration.")
@@ -219,9 +228,39 @@ class Config:
         cls.cognito_app_secret = setting.get("cognito_app_secret", None)
         cls.jwks_cache_ttl = int(setting.get("jwks_cache_ttl", 3600))
 
+        # Phase 10: ai_agent_core_engine bridge settings
+        cls.a2a_ai_agent_module = setting.get("A2A_AI_AGENT_MODULE") or setting.get("a2a_ai_agent_module")
+        cls.a2a_ai_agent_class = setting.get("A2A_AI_AGENT_CLASS") or setting.get("a2a_ai_agent_class")
+        cls.a2a_default_agent_uuid = setting.get("A2A_DEFAULT_AGENT_UUID") or setting.get("a2a_default_agent_uuid")
+        cls.a2a_stream_timeout = float(setting.get("A2A_STREAM_TIMEOUT", setting.get("a2a_stream_timeout", 120.0)))
+        cls.a2a_streaming_enabled = _truthy(
+            setting.get("A2A_STREAMING_ENABLED", setting.get("a2a_streaming_enabled", True))
+        )
+
         # Load local users if using local auth with HTTP transport
         if cls.transport == "http" and cls.auth_provider == "local":
             cls._USERS = cls._load_users()
+
+    @classmethod
+    def _evaluate_phase10_availability(cls) -> None:
+        """Evaluate and log Phase 10 availability after a2a_core initialization."""
+        if cls.logger is None:
+            return
+        try:
+            from .a2a_ai_agent_utility import AI_CORE_AVAILABLE
+            cls.phase10_available = bool(
+                AI_CORE_AVAILABLE and cls.a2a_core is not None
+            )
+        except Exception:
+            cls.phase10_available = False
+
+        if cls.phase10_available:
+            cls.logger.info("Phase 10 ai_agent_core_engine bridge is available.")
+        else:
+            cls.logger.info(
+                "Phase 10 ai_agent_core_engine bridge is NOT available "
+                "(core engine not installed or a2a_core not initialized)."
+            )
 
     @classmethod
     def _initialize_a2a_core(
@@ -374,3 +413,12 @@ class Config:
     def get_entity_children(cls, entity_type: str) -> list[dict[str, Any]]:
         """Get child entities for a specific entity type."""
         return cls.CACHE_RELATIONSHIPS.get(entity_type, [])
+
+
+def _truthy(value: Any) -> bool:
+    """Interpret boolean-like configuration values."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)

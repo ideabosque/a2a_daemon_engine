@@ -291,18 +291,23 @@ Removed protocol surfaces:
 
 ## Phase 10: ai_agent_core_engine Integration
 
-**Status:** Planned
+**Status:** Complete
 
-**Current code state:** no Phase 10 bridge module exists yet. The executor still
-uses static responses for `message_response` and the existing task-assignment
-handler for non-dry-run `task_execution`. `a2a_sse.py` is now suitable as the
-custom SSE fan-out layer, but it is not connected to SDK `EventQueue` output or
-to `ai_agent_core_engine` chunks.
+**Current code state:** Phase 10 is fully implemented. The bridge module
+`a2a_ai_agent_utility.py` provides `resolve_agent`, `load_agent_handler`,
+`build_input_messages`, `create_core_engine_context`, `normalize_final_output`,
+`execute_ai_agent_non_streaming`, and `execute_ai_agent_streaming` with
+dual-path emission to both SDK `EventQueue` and `SSEEventQueue`. The executor
+wires both `_handle_message_response` and `_handle_task_execution` into the
+bridge with fallback to legacy paths. Config has `a2a_ai_agent_module`,
+`a2a_ai_agent_class`, `a2a_default_agent_uuid`, `a2a_stream_timeout`,
+`a2a_streaming_enabled` env-var overrides and a `phase10_available` readiness
+flag. Tests are in `tests/test_phase10.py`.
 
 ### Problem
 
 The daemon's SSE streaming infrastructure (`a2a_sse.py`) and the core engine's
-LLM execution layer (`ai_agent_core_engine`) are completely disconnected:
+LLM execution layer (`ai_agent_core_engine`) were completely disconnected:
 
 - **ai_agent_core_engine** streams LLM output via a synchronous
   `threading.Thread` + `Queue` pattern (`stream_queue` / `stream_event`) and
@@ -312,11 +317,17 @@ LLM execution layer (`ai_agent_core_engine`) are completely disconnected:
 
 - **a2a_daemon_engine** has an `SSEEventQueue` + `StreamingTaskManager` for
   SSE broadcasting and an A2A SDK `EventQueue` for protocol-level streaming,
-  but neither receives data from the core engine. The executor currently has a
+  but neither received data from the core engine. The executor previously had a
   TODO stub (`a2a_executor.py:267`) where real LLM invocation should happen.
 
-The result: task execution always emits static text responses; no LLM output
-flows through A2A streaming.
+The result: task execution always emitted static text responses; no LLM output
+flowed through A2A streaming.
+
+**Resolution:** The Phase 10 bridge intercepts the core engine's `stream_queue`
+directly in-process, re-routing chunks into both A2A protocol channels without
+requiring API Gateway or WebSocket. The TODO stub has been replaced with
+conditional bridge invocation that falls back to legacy paths when the core
+engine is unavailable.
 
 ### Architecture
 
@@ -349,8 +360,8 @@ sequenceDiagram
     BR->>CE: resolve agent + handler.ask_model(messages, stream_queue, stream_event)
     CE-->>BR: stream_queue chunks (threading.Queue)
     BR-->>EX: per-chunk: Message → SDK EventQueue
-    EX-->>SDK: SSE chunks to client
     BR-->>SSE: per-chunk: SSEEvent → SSEEventQueue
+    EX-->>SDK: aggregated streaming response to client
     CE-->>BR: stream_event.set() (completion)
     BR-->>EX: final result + COMPLETED
     EX->>TS: persist task
@@ -483,7 +494,7 @@ blockers.
 | Stale buffer cleanup | Done | `SSEEventQueue.cleanup_stale_buffers()` removes expired buffers with no active subscribers. |
 | Route registration | Done | `create_sse_endpoints()` uses `app.add_route()` when available and keeps a list fallback. |
 | Subscriber queue error handling | Done | `put()` handles cancellation and logs unexpected queue errors before dropping dead subscribers. |
-| Dual event paths | Phase 10 | Still unresolved. `SSEEventQueue`/`StreamingTaskManager` and SDK `EventQueue` are separate emission targets; Phase 10 must feed both from the ai-agent bridge. |
+| Dual event paths | Done | Both `SSEEventQueue` and SDK `EventQueue` fed from bridge utility via `_emit_to_sse()` and `_emit_to_sdk()`. |
 
 ## Release Gates
 
@@ -504,4 +515,4 @@ blockers.
 | 7 | Streaming and multi-turn (SSE, INPUT_REQUIRED, AUTH_REQUIRED, push config) | Complete | `a2a_sse.py`, `a2a_pushconfig.py`, `a2a_executor.py` |
 | 8 | Production hardening (extended cards, telemetry, TCK, security) | Complete | `a2a_extended_card.py`, `a2a_telemetry.py`, `a2a_tck_checker.py` |
 | 9 | Advanced extensions (gRPC, subscriptions, health, rate limit, cancellation, passport, cost) | Complete | `a2a_grpc.py`, `a2a_graphql_subscriptions.py`, `a2a_health_monitor.py`, `a2a_rate_limiter.py`, `a2a_cancellation.py`, `a2a_secure_passport.py`, `a2a_cost_extension.py` |
-| 10 | ai_agent_core_engine integration (bridge utility, non-streaming + streaming LLM, dual-path emission) | Planned; SSE prerequisites complete | Planned: `a2a_ai_agent_utility.py`, updates to `a2a_executor.py`, `config.py`, `AGENTS.md`, `tests/test_phase10.py` |
+| 10 | ai_agent_core_engine integration (bridge utility, non-streaming + streaming LLM, dual-path emission) | Complete | `a2a_ai_agent_utility.py`, `a2a_executor.py`, `config.py`, `AGENTS.md`, `tests/test_phase10.py` |

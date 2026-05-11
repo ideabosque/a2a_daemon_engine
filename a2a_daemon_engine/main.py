@@ -250,6 +250,21 @@ class A2ADaemonEngine:
             request_metadata = params.get("params", {}).get("metadata", {})
             if isinstance(request_metadata, dict):
                 context_state.update(request_metadata)
+            method_params = params.get("params", {})
+            if isinstance(method_params, dict):
+                for source_key, target_key in (
+                    ("agentId", "agent_uuid"),
+                    ("agent_id", "agent_uuid"),
+                    ("threadId", "thread_uuid"),
+                    ("thread_id", "thread_uuid"),
+                    ("runId", "run_uuid"),
+                    ("run_id", "run_uuid"),
+                ):
+                    if source_key in method_params and target_key not in context_state:
+                        context_state[target_key] = method_params[source_key]
+                    if source_key in context_state and target_key not in context_state:
+                        context_state[target_key] = context_state[source_key]
+            context_state["method"] = params.get("method")
 
             context = ServerCallContext(state=context_state)
             method = params.get("method", "")
