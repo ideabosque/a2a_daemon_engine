@@ -7,7 +7,7 @@ from graphene import ResolveInfo
 from silvaengine_utility import method_cache
 
 from ..handlers.config import Config
-from ..models import a2a_task
+from ..models.dynamodb import a2a_task
 from ..types.a2a_task import A2ATaskListType, A2ATaskType
 
 

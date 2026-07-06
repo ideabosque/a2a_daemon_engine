@@ -7,7 +7,7 @@ from typing import Any
 from graphene import Boolean, Field, Mutation, String
 from silvaengine_utility import JSON
 
-from ..models.a2a_task import delete_a2a_task, insert_update_a2a_task
+from ..models.dynamodb.a2a_task import delete_a2a_task, insert_update_a2a_task
 from ..types.a2a_task import A2ATaskType
 
 

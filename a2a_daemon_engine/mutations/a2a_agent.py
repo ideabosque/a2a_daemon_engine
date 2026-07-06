@@ -7,7 +7,7 @@ from typing import Any
 from graphene import Boolean, Field, List, Mutation, String
 from silvaengine_utility import JSON
 
-from ..models.a2a_agent import delete_a2a_agent, insert_update_a2a_agent
+from ..models.dynamodb.a2a_agent import delete_a2a_agent, insert_update_a2a_agent
 from ..types.a2a_agent import A2AAgentType
 
 

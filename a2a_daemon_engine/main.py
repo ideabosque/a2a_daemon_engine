@@ -1,32 +1,21 @@
 #!/usr/bin/python
-"""
-AI A2A Daemon Engine - Main Entry Point
+# -*- coding: utf-8 -*-
+from __future__ import print_function
 
-This module provides the main A2ADaemonEngine class and CLI entry point.
-"""
+__author__ = "bibow"
 
-import asyncio
 import json
 import logging
-import os
-import sys
-from typing import Any
+from typing import Any, Dict, List
 
-from silvaengine_utility.serializer import Serializer
+from graphene import Schema
+from silvaengine_utility import Graphql, Invoker
 
 from .handlers.config import Config
+from .schema import Mutations, Query, type_class
 
-__author__ = "SilvaEngine Team"
 
-
-# Hook function applied to deployment
-def deploy() -> list:
-    """
-    Deployment hook for service registration.
-
-    Returns:
-        List of service definitions with functions and their metadata
-    """
+def deploy() -> List:
     return [
         {
             "service": "A2A Daemon",
@@ -37,71 +26,30 @@ def deploy() -> list:
                     "label": "A2A Core GraphQL",
                     "query": [
                         {"action": "ping", "label": "Ping"},
-                        {
-                            "action": "a2aAgent",
-                            "label": "View A2A Agent",
-                        },
-                        {
-                            "action": "a2aAgentList",
-                            "label": "View A2A Agent List",
-                        },
-                        {
-                            "action": "a2aTask",
-                            "label": "View A2A Task",
-                        },
-                        {
-                            "action": "a2aTaskList",
-                            "label": "View A2A Task List",
-                        },
-                        {
-                            "action": "a2aMessage",
-                            "label": "View A2A Message",
-                        },
-                        {
-                            "action": "a2aMessageList",
-                            "label": "View A2A Message List",
-                        },
-                        {
-                            "action": "a2aSetting",
-                            "label": "View A2A Setting",
-                        },
+                        {"action": "a2aAgent", "label": "View A2A Agent"},
+                        {"action": "a2aAgentList", "label": "View A2A Agent List"},
+                        {"action": "a2aTask", "label": "View A2A Task"},
+                        {"action": "a2aTaskList", "label": "View A2A Task List"},
+                        {"action": "a2aMessage", "label": "View A2A Message"},
+                        {"action": "a2aMessageList", "label": "View A2A Message List"},
+                        {"action": "a2aSetting", "label": "View A2A Setting"},
                     ],
                     "mutation": [
-                        {
-                            "action": "insertUpdateA2aAgent",
-                            "label": "Create/Update A2A Agent",
-                        },
-                        {
-                            "action": "deleteA2aAgent",
-                            "label": "Delete A2A Agent",
-                        },
-                        {
-                            "action": "insertUpdateA2aTask",
-                            "label": "Create/Update A2A Task",
-                        },
-                        {
-                            "action": "deleteA2aTask",
-                            "label": "Delete A2A Task",
-                        },
-                        {
-                            "action": "insertUpdateA2aMessage",
-                            "label": "Create/Update A2A Message",
-                        },
-                        {
-                            "action": "deleteA2aMessage",
-                            "label": "Delete A2A Message",
-                        },
-                        {
-                            "action": "insertUpdateA2aSetting",
-                            "label": "Create/Update A2A Setting",
-                        },
+                        {"action": "insertUpdateA2aAgent", "label": "Create/Update A2A Agent"},
+                        {"action": "deleteA2aAgent", "label": "Delete A2A Agent"},
+                        {"action": "insertUpdateA2aTask", "label": "Create/Update A2A Task"},
+                        {"action": "deleteA2aTask", "label": "Delete A2A Task"},
+                        {"action": "insertUpdateA2aMessage", "label": "Create/Update A2A Message"},
+                        {"action": "deleteA2aMessage", "label": "Delete A2A Message"},
+                        {"action": "insertUpdateA2aSetting", "label": "Create/Update A2A Setting"},
+                        {"action": "deleteA2aSetting", "label": "Delete A2A Setting"},
                     ],
                     "type": "RequestResponse",
                     "support_methods": ["POST"],
                     "is_auth_required": False,
                     "is_graphql": True,
                     "settings": "beta_core_ai_agent",
-                    "disabled_in_resources": True,  # Ignore adding to resource list.
+                    "disabled_in_resources": True,
                 },
                 "a2a": {
                     "is_static": False,
@@ -118,114 +66,25 @@ def deploy() -> list:
     ]
 
 
-class A2ADaemonEngine:
-    """
-    A2A Daemon Engine Main Class
-
-    Manages the A2A daemon server lifecycle including:
-    - Configuration initialization
-    - Partition key assembly (single point of assembly)
-    - GraphQL execution
-    - HTTP/gRPC server execution
-    """
-
-    def __init__(self, logger: logging.Logger, **setting: dict[str, Any]) -> None:
-        """
-        Initialize A2A Daemon Engine.
-
-        Args:
-            logger: Logger instance
-            **setting: Configuration settings
-        """
-        # Initialize configuration via the Config class
-        Config.initialize(logger, **setting)
-
-        self.transport = setting["transport"]
-        self.port = int(setting["port"])
+class A2ADaemonEngine(Graphql):
+    def __init__(self, logger: logging.Logger, **setting: Dict[str, Any]) -> None:
+        Graphql.__init__(self, logger, **setting)
         self.logger = logger
         self.setting = setting
 
-    def _run_async(self, coro):
-        """
-        Run an async coroutine from a sync context (e.g. Lambda).
-
-        If a loop is already running on this thread (async host), submit the
-        coroutine to a fresh thread so we don't nest event loops. Otherwise
-        run it directly with asyncio.run().
-        """
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coro)
-
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(asyncio.run, coro)
-            return future.result()
-
-    def _apply_partition_defaults(self, params: dict[str, Any]) -> None:
-        """
-        Ensure endpoint_id/part_id defaults and assemble partition_key.
-
-        This is the SINGLE POINT OF ASSEMBLY for partition_key.
-
-        Pattern:
-        1. Extract endpoint_id from params or setting (defaults)
-        2. Extract part_id from params or setting (defaults, optional)
-        3. Assemble partition_key = "endpoint_id#part_id" (or just endpoint_id if no part_id)
-        4. Store in params for downstream use
-
-        Args:
-            params: Parameters dictionary to update
-        """
-        if params.get("endpoint_id") is None:
-            params["endpoint_id"] = self.setting.get("endpoint_id")
-        if params.get("part_id") is None:
-            params["part_id"] = self.setting.get("part_id")
-
-        endpoint_id = params.get("endpoint_id")
-        part_id = params.get("part_id")
-        params["partition_key"] = (
-            f"{endpoint_id}#{part_id}" if part_id else f"{endpoint_id}"
-        )
-
-    def a2a_core_graphql(self, **params: dict[str, Any]) -> Any:
-        """
-        GraphQL endpoint with partition_key assembly.
-
-        This method assembles partition_key before delegating to Config.a2a_core.
-
-        Args:
-            **params: GraphQL parameters
-
-        Returns:
-            GraphQL execution result
-        """
+    def a2a_core_graphql(self, **params: Dict[str, Any]) -> Any:
         self._apply_partition_defaults(params)
-        return Config.a2a_core.a2a_core_graphql(**params)
+        return self.execute(self.__class__.build_graphql_schema(), **params)
 
-    def a2a(self, **params: dict[str, Any]) -> dict[str, Any]:
-        """
-        Serverless A2A JSON-RPC protocol handler.
-
-        Args:
-            **params: JSON-RPC operation parameters including:
-                - jsonrpc: "2.0" (identifies JSON-RPC request)
-                - method: A2A SDK method (e.g., "message/send")
-                - params: Method parameters (object)
-                - id: Request identifier
-
-        Returns:
-            JSON-RPC response encoded as JSON.
-        """
+    def a2a(self, **params: Dict[str, Any]) -> Any:
+        """Serverless A2A JSON-RPC protocol handler."""
         self._apply_partition_defaults(params)
 
         if params.get("jsonrpc") != "2.0":
             raise ValueError("A2A protocol calls must use JSON-RPC 2.0 format")
 
         if not Config.a2a_server:
-            return Serializer.json_dumps(
+            return json.dumps(
                 {
                     "jsonrpc": "2.0",
                     "error": {"code": -32603, "message": "A2A SDK not initialized"},
@@ -294,10 +153,10 @@ class A2ADaemonEngine:
                     params.get("id"),
                 )
 
-            return Serializer.json_dumps(result)
+            return json.dumps(result)
 
         except ImportError as e:
-            return Serializer.json_dumps(
+            return json.dumps(
                 {
                     "jsonrpc": "2.0",
                     "error": {
@@ -309,7 +168,7 @@ class A2ADaemonEngine:
             )
         except Exception as e:
             self.logger.error(f"Error handling JSON-RPC: {e}", exc_info=True)
-            return Serializer.json_dumps(
+            return json.dumps(
                 {
                     "jsonrpc": "2.0",
                     "error": {"code": -32603, "message": str(e)},
@@ -317,166 +176,67 @@ class A2ADaemonEngine:
                 }
             )
 
-    async def daemon(self):
-        """
-        Run A2A daemon server.
+    def _run_async(self, coro):
+        """Run an async coroutine from a sync context."""
+        import asyncio
 
-        Starts the server based on configured transport (HTTP or gRPC).
-
-        Architecture (Option A - A2A app as primary):
-        - A2A SDK app is the primary application
-        - FastAPI REST routes are mounted at /rest
-        - This follows the canonical A2A SDK pattern
-        """
         try:
-            if self.transport == "http":
-                import uvicorn
-                from fastapi import FastAPI
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
 
-                from .handlers.a2a_app import app as fastapi_app
-                from .handlers.auth_router import router as auth_router
-                from .handlers.middleware import FlexJWTMiddleware
+        import concurrent.futures
 
-                if not Config.a2a_server or not Config.a2a_server.app:
-                    reason = (
-                        getattr(Config, "a2a_server_error", None)
-                        or "A2A server app was not created"
-                    )
-                    self.logger.error(
-                        "A2A SDK server not initialized for HTTP transport: "
-                        f"{reason}"
-                    )
-                    raise RuntimeError(
-                        "A2A SDK server required for HTTP transport. "
-                        f"Initialization error: {reason}"
-                    )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result()
 
-                # Get the A2A SDK Starlette application (PRIMARY). Older SDK
-                # wrappers expose build(); a2a-sdk 1.x route factories already
-                # return a Starlette app.
-                a2a_app = (
-                    Config.a2a_server.app.build()
-                    if hasattr(Config.a2a_server.app, "build")
-                    else Config.a2a_server.app
-                )
+    def _apply_partition_defaults(self, params: Dict[str, Any]) -> None:
+        endpoint_id = params.get("endpoint_id", self.setting.get("endpoint_id"))
+        part_id = params.get(
+            "part_id",
+            params.get("metadata", {}).get("part_id", self.setting.get("part_id")),
+        )
 
-                self.logger.info("A2A SDK app initialized as primary application")
-                self.logger.info(
-                    "Agent card auto-exposed at: /.well-known/agent-card.json"
-                )
-                self.logger.info("Native A2A JSON-RPC at: /")
+        if params.get("context") is None:
+            params["context"] = {}
 
-                # Create a new FastAPI app for REST routes only
-                rest_app = FastAPI(title="A2A Daemon REST API")
+        if endpoint_id and "endpoint_id" not in params["context"]:
+            params["context"]["endpoint_id"] = endpoint_id
+        if part_id and "part_id" not in params["context"]:
+            params["context"]["part_id"] = part_id
 
-                # Add JWT authentication middleware to REST app
-                rest_app.add_middleware(FlexJWTMiddleware, public_paths=["/health"])
+        if not params.get("partition_key"):
+            if endpoint_id and part_id:
+                params["partition_key"] = f"{endpoint_id}#{part_id}"
+            elif endpoint_id:
+                params["partition_key"] = endpoint_id
 
-                # Mount auth router on REST app
-                rest_app.include_router(auth_router)
+        if params.get("partition_key") and "partition_key" not in params["context"]:
+            params["context"]["partition_key"] = params["partition_key"]
 
-                # Import all the routes from fastapi_app and register them on rest_app
-                # This preserves all existing REST endpoints
-                for route in fastapi_app.routes:
-                    # Skip lifespan routes as they're already handled
-                    if hasattr(route, "path"):
-                        rest_app.routes.append(route)
-
-                # Mount the REST app on A2A app at /rest
-                a2a_app.mount("/rest", rest_app)
-
-                self.logger.info("Operations API mounted at: /rest")
-                self.logger.info(
-                    "GraphQL endpoint at: /rest/{endpoint_id}/a2a_core_graphql"
-                )
-                self.logger.info("Health check at: /rest/health")
-
-                self.logger.info(
-                    "Running A2A Daemon in HTTP mode (Option A - A2A app as primary)..."
-                )
-                self.logger.info(f"Server will start on http://0.0.0.0:{self.port}")
-                self.logger.info(f"Auth provider: {Config.auth_provider}")
-
-                config = uvicorn.Config(
-                    app=a2a_app,  # Use A2A app as primary
-                    host="0.0.0.0",
-                    port=self.port,
-                    log_level="info",
-                    access_log=True,
-                    loop="asyncio",
-                )
-                server = uvicorn.Server(config)
-                await server.serve()
-
-            elif self.transport == "grpc":
-                self.logger.info("Running A2A Daemon in gRPC mode...")
-                # Phase 9: gRPC transport implementation
-                from .handlers.a2a_grpc import A2AGRPCServer, GRPCConfig
-
-                grpc_config = GRPCConfig(
-                    host="0.0.0.0",
-                    port=self.port,
-                    max_workers=10,
-                )
-
-                server = A2AGRPCServer(
-                    agent_executor=self.agent_executor,
-                    task_store=self.task_store,
-                    config=grpc_config,
-                    logger=self.logger,
-                )
-                await server.start()
-            else:
-                raise ValueError(f"Unsupported transport: {self.transport}")
-
-        except KeyboardInterrupt:
-            self.logger.info("Daemon interrupted by user.")
-        except Exception:
-            self.logger.exception("Fatal daemon error")
-            sys.exit(1)
+    @staticmethod
+    def build_graphql_schema() -> Schema:
+        return Schema(
+            query=Query,
+            mutation=Mutations,
+            types=type_class(),
+        )
 
 
-def main():
-    """
-    CLI entry point for A2A Daemon Engine.
+# ---------------------------------------------------------------------------
+# Module-level dispatch functions for gateway integration
+# ---------------------------------------------------------------------------
 
-    Loads configuration from environment variables and starts the daemon.
-    """
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-    logger = logging.getLogger()
-
-    # Determine transport and config file
-    transport = os.getenv("A2A_TRANSPORT", "http").lower()
-    a2a_config_file = os.getenv("A2A_CONFIG_FILE", None)
-
-    # Load configuration
-    a2a_daemon_engine = A2ADaemonEngine(
-        logger,
-        **{
-            "region_name": os.getenv("REGION_NAME"),
-            "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID"),
-            "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
-            "transport": transport,
-            "port": int(os.getenv("PORT", "8001")),
-            "a2a_configuration": (
-                json.load(open(a2a_config_file)) if a2a_config_file else None
-            ),
-            "auth_provider": os.getenv("AUTH_PROVIDER", "local").lower(),
-            "local_user_file": os.getenv("LOCAL_USER_FILE"),
-            "admin_static_token": os.getenv("ADMIN_STATIC_TOKEN"),
-            "cognito_user_pool_id": os.getenv("COGNITO_USER_POOL_ID"),
-            "cognito_app_client_id": os.getenv("COGNITO_APP_CLIENT_ID"),
-            "cognito_app_secret": os.getenv("COGNITO_APP_SECRET"),
-            "cognito_jwks_url": os.getenv("COGNITO_JWKS_URL"),
-        },
-    )
-
-    # Start daemon
-    asyncio.run(a2a_daemon_engine.daemon())
+def _engine() -> A2ADaemonEngine:
+    return A2ADaemonEngine(Config.get_logger(), **Config.get_setting())
 
 
-if __name__ == "__main__":
-    main()
+def dispatch_graphql(**params: Dict[str, Any]) -> Any:
+    """Gateway dispatch entry point for A2A Core GraphQL."""
+    return _engine().a2a_core_graphql(**params)
+
+
+def dispatch_a2a(**params: Dict[str, Any]) -> Any:
+    """Gateway dispatch entry point for A2A JSON-RPC messages."""
+    return _engine().a2a(**params)

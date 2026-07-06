@@ -7,7 +7,7 @@ from graphene import ResolveInfo
 from silvaengine_utility import method_cache
 
 from ..handlers.config import Config
-from ..models import a2a_agent
+from ..models.dynamodb import a2a_agent
 from ..types.a2a_agent import A2AAgentListType, A2AAgentType
 
 

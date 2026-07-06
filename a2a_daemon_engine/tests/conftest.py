@@ -142,7 +142,7 @@ def schema(a2a_daemon_engine, mock_settings, mock_logger):
     from graphene import Schema
     from graphql import execute_sync, get_introspection_query, parse
 
-    from a2a_daemon_engine.handlers.schema import Mutations, Query, type_class
+    from a2a_daemon_engine.schema import Mutations, Query, type_class
 
     # Create the Graphene schema with types
     graphene_schema = Schema(query=Query, mutation=Mutations, types=type_class())
@@ -161,7 +161,7 @@ def graphql_schema():
     """Provide Graphene Schema object for testing."""
     from graphene import Schema
 
-    from a2a_daemon_engine.handlers.schema import Mutations, Query
+    from a2a_daemon_engine.schema import Mutations, Query
 
     return Schema(query=Query, mutation=Mutations)
 

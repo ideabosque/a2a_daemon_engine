@@ -1,58 +1,12 @@
 #!/usr/bin/python
-"""AI A2A Daemon Engine - Database Models Package
+# -*- coding: utf-8 -*-
+"""A2A Daemon Engine models package.
 
-This package contains all DynamoDB model definitions using the partition_key architecture.
-All models follow the composite partition key pattern: partition_key = "endpoint_id#part_id"
+Restructured to match mcp_daemon_engine layout:
+- models/dynamodb/    — PynamoDB model files
+- models/repositories/ — dispatch boundary (base.py, dispatch.py)
+- models/postgresql/   — SQLAlchemy models (stub for future dual-backend)
 """
+from __future__ import print_function
 
-__author__ = "SilvaEngine Team"
-__version__ = "0.0.1"
-
-# Model imports
-from .a2a_agent import (
-    A2AAgentModel,
-    delete_a2a_agent,
-    get_a2a_agent,
-    insert_update_a2a_agent,
-)
-from .a2a_message import (
-    A2AMessageModel,
-    delete_a2a_message,
-    get_a2a_message,
-    insert_update_a2a_message,
-)
-from .a2a_setting import (
-    A2ASettingModel,
-    delete_a2a_setting,
-    get_a2a_setting,
-    insert_update_a2a_setting,
-)
-from .a2a_task import (
-    A2ATaskModel,
-    delete_a2a_task,
-    get_a2a_task,
-    insert_update_a2a_task,
-)
-
-__all__ = [
-    # Agent
-    "A2AAgentModel",
-    "get_a2a_agent",
-    "insert_update_a2a_agent",
-    "delete_a2a_agent",
-    # Task
-    "A2ATaskModel",
-    "get_a2a_task",
-    "insert_update_a2a_task",
-    "delete_a2a_task",
-    # Message
-    "A2AMessageModel",
-    "get_a2a_message",
-    "insert_update_a2a_message",
-    "delete_a2a_message",
-    # Setting
-    "A2ASettingModel",
-    "get_a2a_setting",
-    "insert_update_a2a_setting",
-    "delete_a2a_setting",
-]
+__author__ = "bibow"

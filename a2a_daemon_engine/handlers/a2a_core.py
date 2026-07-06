@@ -74,7 +74,7 @@ class A2ACore(Graphql):
             GraphQL execution result
         """
         # Import schema components
-        from .schema import Mutations, Query, type_class
+        from ..schema import Mutations, Query, type_class
 
         # Create GraphQL schema
         schema = Schema(

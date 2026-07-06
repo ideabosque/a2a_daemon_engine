@@ -7,7 +7,7 @@ from graphene import ResolveInfo
 from silvaengine_utility import method_cache
 
 from ..handlers.config import Config
-from ..models import a2a_message
+from ..models.dynamodb import a2a_message
 from ..types.a2a_message import A2AMessageListType, A2AMessageType
 
 
