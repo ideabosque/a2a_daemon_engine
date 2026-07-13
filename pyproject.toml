@@ -76,7 +76,8 @@ ruff = "^0.0.292"
 [tool.poetry.extras]
 grpc = ["grpcio", "grpcio-tools"]
 telemetry = ["opentelemetry-api", "opentelemetry-sdk"]
-all = ["grpcio", "grpcio-tools", "opentelemetry-api", "opentelemetry-sdk"]
+postgresql = ["SQLAlchemy>=1.4", "psycopg2-binary>=2.9", "alembic>=1.10"]
+all = ["grpcio", "grpcio-tools", "opentelemetry-api", "opentelemetry-sdk", "SQLAlchemy>=1.4", "psycopg2-binary>=2.9", "alembic>=1.10"]
 
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/ideabosque/a2a_daemon_engine/issues"

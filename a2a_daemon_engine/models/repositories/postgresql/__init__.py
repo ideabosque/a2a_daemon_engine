@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """PostgreSQL repositories for the PostgreSQL backend.
 
-This is a stub. PostgreSQL model and repository files will live under
-models/repositories/postgresql/ once the SQLAlchemy backend is introduced.
-Import paths will be clean, e.g.:
-  from ..base import EntityRepository
-  from ....handlers.config import Config
-  from ....types.a2a_agent import A2AAgentType
+All PG repository files live under models/repositories/postgresql/.
+Import paths are clean:
+  from ...postgresql.base import normalize_row           # models/postgresql/base.py
+  from ...postgresql.a2a_agent import A2AAgentModel      # models/postgresql/a2a_agent.py
+  from ..base import EntityRepository                    # models/repositories/base.py
+  from ....handlers.config import Config                 # a2a_daemon_engine/handlers/config.py
+  from ....types.a2a_agent import A2AAgentType           # a2a_daemon_engine/types/a2a_agent.py
 """
 from __future__ import print_function
 
@@ -18,12 +19,7 @@ from ..base import EntityRepository
 
 
 def register_all(registry: Dict[str, EntityRepository]) -> None:
-    """Register all PostgreSQL repositories into the given registry dict.
-
-    The PG backend is not yet implemented. When repository modules are
-    added they should be imported lazily here (guarded by ImportError so
-    optional PG deps do not break the DynamoDB-only path).
-    """
+    """Register all PostgreSQL repositories into the given registry dict."""
     _repos = [
         ("a2a_agent_repo", "A2AAgentPGRepository"),
         ("a2a_task_repo", "A2ATaskPGRepository"),

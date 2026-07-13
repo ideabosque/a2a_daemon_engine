@@ -1,0 +1,648 @@
+[
+  {
+    "method": "A2AAgentPGRepository.insert_update",
+    "status": "pass",
+    "elapsed_ms": 70.28,
+    "scenario": "INT-006",
+    "arguments": {
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "agent_name": "Task Processor Agent",
+      "capabilities": [
+        "data_processing",
+        "analysis"
+      ],
+      "endpoint_url": "http://localhost:8001",
+      "status": "active",
+      "metadata": {
+        "version": "1.0"
+      },
+      "updated_by": "test"
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "agent_id": "6c43ffe4-e61d-4a9b-88a3-aae398cca810",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "agent_name": "Task Processor Agent",
+      "capabilities": "[\n  \"data_processing\",\n  \"analysis\"\n]",
+      "endpoint_url": "http://localhost:8001",
+      "status": "active",
+      "metadata": {
+        "version": "1.0"
+      },
+      "updated_by": "test",
+      "created_at": "2026-07-07 02:53:03.587860",
+      "updated_at": "2026-07-07 02:53:03.587860"
+    },
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.get",
+    "status": "pass",
+    "elapsed_ms": 1.49,
+    "scenario": "INT-006",
+    "arguments": {
+      "partition_key": "test-endpoint#test-part",
+      "agent_id": "6c43ffe4-e61d-4a9b-88a3-aae398cca810"
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "agent_id": "6c43ffe4-e61d-4a9b-88a3-aae398cca810",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "agent_name": "Task Processor Agent",
+      "capabilities": "[\n  \"data_processing\",\n  \"analysis\"\n]",
+      "endpoint_url": "http://localhost:8001",
+      "status": "active",
+      "metadata": {
+        "version": "1.0"
+      },
+      "updated_by": "test",
+      "created_at": "2026-07-07 02:53:03.587860",
+      "updated_at": "2026-07-07 02:53:03.587860"
+    },
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.count",
+    "status": "pass",
+    "elapsed_ms": 2.23,
+    "scenario": "INT-006",
+    "arguments": {
+      "partition_key": "test-endpoint#test-part",
+      "agent_id": "6c43ffe4-e61d-4a9b-88a3-aae398cca810"
+    },
+    "output": 1,
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.insert_update (update)",
+    "status": "pass",
+    "elapsed_ms": 6.26,
+    "scenario": "INT-006",
+    "arguments": {
+      "agent_id": "6c43ffe4-e61d-4a9b-88a3-aae398cca810",
+      "agent_name": "Task Processor Agent v2",
+      "status": "inactive",
+      "metadata": {
+        "version": "2.0"
+      }
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "agent_id": "6c43ffe4-e61d-4a9b-88a3-aae398cca810",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "agent_name": "Task Processor Agent v2",
+      "capabilities": "[\n  \"data_processing\"\n]",
+      "endpoint_url": "http://localhost:8001",
+      "status": "inactive",
+      "metadata": {
+        "version": "2.0"
+      },
+      "updated_by": "test",
+      "created_at": "2026-07-07 02:53:03.587860",
+      "updated_at": "2026-07-07 02:53:03.605372"
+    },
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.list",
+    "status": "pass",
+    "elapsed_ms": 3.75,
+    "scenario": "INT-006",
+    "arguments": {
+      "limit": 10
+    },
+    "output": {
+      "total": 1,
+      "count": 1
+    },
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.delete",
+    "status": "pass",
+    "elapsed_ms": 2.45,
+    "scenario": "INT-006",
+    "arguments": {
+      "agent_id": "6c43ffe4-e61d-4a9b-88a3-aae398cca810"
+    },
+    "output": true,
+    "error": null
+  },
+  {
+    "method": "A2ATaskPGRepository.insert_update",
+    "status": "pass",
+    "elapsed_ms": 14.75,
+    "scenario": "INT-004",
+    "arguments": {
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "task_type": "data-processing",
+      "priority": "high",
+      "status": "submitted",
+      "input_data": {
+        "query": "hello"
+      },
+      "updated_by": "test"
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "task_id": "b022aa39-4a04-411b-bd1a-c0e50e65c493",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "task_type": "data-processing",
+      "assigned_agent_id": null,
+      "status": "SUBMITTED",
+      "priority": "high",
+      "input_data": {
+        "query": "hello"
+      },
+      "output_data": {},
+      "updated_by": "test",
+      "created_at": "2026-07-07 02:53:03.774378",
+      "updated_at": "2026-07-07 02:53:03.774378",
+      "completed_at": null,
+      "context_id": null,
+      "created_at_sdk": "2026-07-07 02:53:03.774378",
+      "last_modified": "2026-07-07 02:53:03.774378"
+    },
+    "error": null
+  },
+  {
+    "method": "A2ATaskPGRepository.insert_update (working)",
+    "status": "pass",
+    "elapsed_ms": 4.47,
+    "scenario": "INT-004",
+    "arguments": {
+      "task_id": "b022aa39-4a04-411b-bd1a-c0e50e65c493",
+      "status": "working"
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "task_id": "b022aa39-4a04-411b-bd1a-c0e50e65c493",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "task_type": "data-processing",
+      "assigned_agent_id": null,
+      "status": "WORKING",
+      "priority": "high",
+      "input_data": {
+        "query": "hello"
+      },
+      "output_data": {},
+      "updated_by": "test",
+      "created_at": "2026-07-07 02:53:03.774378",
+      "updated_at": "2026-07-07 02:53:03.785387",
+      "completed_at": null,
+      "context_id": null,
+      "created_at_sdk": "2026-07-07 02:53:03.774378",
+      "last_modified": "2026-07-07 02:53:03.785387"
+    },
+    "error": null
+  },
+  {
+    "method": "A2ATaskPGRepository.insert_update (completed)",
+    "status": "pass",
+    "elapsed_ms": 4.39,
+    "scenario": "INT-004",
+    "arguments": {
+      "task_id": "b022aa39-4a04-411b-bd1a-c0e50e65c493",
+      "status": "completed",
+      "output_data": {
+        "result": "ok"
+      }
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "task_id": "b022aa39-4a04-411b-bd1a-c0e50e65c493",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "task_type": "data-processing",
+      "assigned_agent_id": null,
+      "status": "COMPLETED",
+      "priority": "high",
+      "input_data": {
+        "query": "hello"
+      },
+      "output_data": {
+        "result": "ok"
+      },
+      "updated_by": "test",
+      "created_at": "2026-07-07 02:53:03.774378",
+      "updated_at": "2026-07-07 02:53:03.789389",
+      "completed_at": "2026-07-07 02:53:03.789389",
+      "context_id": null,
+      "created_at_sdk": "2026-07-07 02:53:03.774378",
+      "last_modified": "2026-07-07 02:53:03.789389"
+    },
+    "error": null
+  },
+  {
+    "method": "A2ATaskPGRepository.list",
+    "status": "pass",
+    "elapsed_ms": 3.08,
+    "scenario": "INT-004",
+    "arguments": {
+      "status": "COMPLETED",
+      "limit": 10
+    },
+    "output": {
+      "total": 1
+    },
+    "error": null
+  },
+  {
+    "method": "A2ATaskPGRepository.delete",
+    "status": "pass",
+    "elapsed_ms": 2.26,
+    "scenario": "INT-004",
+    "arguments": {
+      "task_id": "b022aa39-4a04-411b-bd1a-c0e50e65c493"
+    },
+    "output": true,
+    "error": null
+  },
+  {
+    "method": "A2AMessagePGRepository.insert_update",
+    "status": "pass",
+    "elapsed_ms": 13.71,
+    "scenario": "INT-006",
+    "arguments": {
+      "from_agent_id": "agent-001",
+      "to_agent_id": "agent-002",
+      "message_type": "request",
+      "payload": {
+        "text": "hello"
+      },
+      "status": "sent"
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "message_id": "94b4788a-510b-48e7-9ac0-706030bca48a",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "from_agent_id": "agent-001",
+      "to_agent_id": "agent-002",
+      "message_type": "request",
+      "payload": {
+        "text": "hello"
+      },
+      "status": "sent",
+      "created_at": "2026-07-07 02:53:03.922617",
+      "delivered_at": null
+    },
+    "error": null
+  },
+  {
+    "method": "A2AMessagePGRepository.insert_update (delivered)",
+    "status": "pass",
+    "elapsed_ms": 4.76,
+    "scenario": "INT-006",
+    "arguments": {
+      "message_id": "94b4788a-510b-48e7-9ac0-706030bca48a",
+      "status": "delivered"
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "message_id": "94b4788a-510b-48e7-9ac0-706030bca48a",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "from_agent_id": "agent-001",
+      "to_agent_id": "agent-002",
+      "message_type": "request",
+      "payload": {
+        "text": "hello"
+      },
+      "status": "delivered",
+      "created_at": "2026-07-07 02:53:03.922617",
+      "delivered_at": "2026-07-07 02:53:03.932621"
+    },
+    "error": null
+  },
+  {
+    "method": "A2AMessagePGRepository.list",
+    "status": "pass",
+    "elapsed_ms": 3.18,
+    "scenario": "INT-006",
+    "arguments": {
+      "from_agent_id": "agent-001"
+    },
+    "output": {
+      "total": 1
+    },
+    "error": null
+  },
+  {
+    "method": "A2AMessagePGRepository.delete",
+    "status": "pass",
+    "elapsed_ms": 2.78,
+    "scenario": "INT-006",
+    "arguments": {
+      "message_id": "94b4788a-510b-48e7-9ac0-706030bca48a"
+    },
+    "output": true,
+    "error": null
+  },
+  {
+    "method": "A2ASettingPGRepository.insert_update",
+    "status": "pass",
+    "elapsed_ms": 42.57,
+    "scenario": "INT-006",
+    "arguments": {
+      "setting": {
+        "discovery_enabled": true,
+        "max_concurrent_tasks": 10
+      },
+      "updated_by": "test"
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "setting_id": "de295470-dabd-450c-9b67-6bbce47c2c67",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "setting": {
+        "discovery_enabled": true,
+        "max_concurrent_tasks": "10"
+      },
+      "updated_by": "test",
+      "created_at": "2026-07-07 02:53:04.103686",
+      "updated_at": "2026-07-07 02:53:04.103686"
+    },
+    "error": null
+  },
+  {
+    "method": "A2ASettingPGRepository.insert_update (update)",
+    "status": "pass",
+    "elapsed_ms": 6.2,
+    "scenario": "INT-006",
+    "arguments": {
+      "setting_id": "de295470-dabd-450c-9b67-6bbce47c2c67",
+      "setting": {
+        "max_concurrent_tasks": 20
+      }
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "setting_id": "de295470-dabd-450c-9b67-6bbce47c2c67",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "setting": {
+        "max_concurrent_tasks": "20"
+      },
+      "updated_by": "test",
+      "created_at": "2026-07-07 02:53:04.103686",
+      "updated_at": "2026-07-07 02:53:04.143111"
+    },
+    "error": null
+  },
+  {
+    "method": "A2ASettingPGRepository.get",
+    "status": "pass",
+    "elapsed_ms": 1.25,
+    "scenario": "INT-006",
+    "arguments": {
+      "partition_key": "test-endpoint#test-part",
+      "setting_id": "de295470-dabd-450c-9b67-6bbce47c2c67"
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "setting_id": "de295470-dabd-450c-9b67-6bbce47c2c67",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "setting": {
+        "max_concurrent_tasks": "20"
+      },
+      "updated_by": "test",
+      "created_at": "2026-07-07 02:53:04.103686",
+      "updated_at": "2026-07-07 02:53:04.143111"
+    },
+    "error": null
+  },
+  {
+    "method": "A2ASettingPGRepository.delete",
+    "status": "pass",
+    "elapsed_ms": 2.58,
+    "scenario": "INT-006",
+    "arguments": {
+      "setting_id": "de295470-dabd-450c-9b67-6bbce47c2c67"
+    },
+    "output": true,
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.insert_update (tenant A)",
+    "status": "pass",
+    "elapsed_ms": 10.49,
+    "scenario": "INT-007",
+    "arguments": {
+      "agent_name": "Tenant A Agent"
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "agent_id": "f7272a49-7f0b-45d7-95f3-78b65b698c88",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "agent_name": "Tenant A Agent",
+      "capabilities": "[]",
+      "endpoint_url": "http://a",
+      "status": "active",
+      "metadata": {},
+      "updated_by": "test",
+      "created_at": "2026-07-07 02:53:04.302006",
+      "updated_at": "2026-07-07 02:53:04.302006"
+    },
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.get (cross-tenant B->A)",
+    "status": "pass",
+    "elapsed_ms": 1.33,
+    "scenario": "INT-007",
+    "arguments": {
+      "partition_key": "test-endpoint#other-part",
+      "agent_id": "f7272a49-7f0b-45d7-95f3-78b65b698c88"
+    },
+    "output": null,
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.count (cross-tenant B->A)",
+    "status": "pass",
+    "elapsed_ms": 0.82,
+    "scenario": "INT-007",
+    "arguments": {
+      "partition_key": "test-endpoint#other-part",
+      "agent_id": "f7272a49-7f0b-45d7-95f3-78b65b698c88"
+    },
+    "output": 0,
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.list (tenant B)",
+    "status": "pass",
+    "elapsed_ms": 1.41,
+    "scenario": "INT-007",
+    "arguments": {
+      "limit": 10
+    },
+    "output": {
+      "total": 0
+    },
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.list (tenant A)",
+    "status": "pass",
+    "elapsed_ms": 1.58,
+    "scenario": "INT-007",
+    "arguments": {
+      "limit": 10
+    },
+    "output": {
+      "total": 1
+    },
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.delete (cleanup)",
+    "status": "pass",
+    "elapsed_ms": 2.92,
+    "scenario": "INT-007",
+    "arguments": {
+      "agent_id": "f7272a49-7f0b-45d7-95f3-78b65b698c88"
+    },
+    "output": true,
+    "error": null
+  },
+  {
+    "method": "A2AAgentPGRepository.get (missing)",
+    "status": "pass",
+    "elapsed_ms": 3.85,
+    "scenario": "SOP-\u00a78-missing_data",
+    "arguments": {
+      "partition_key": "test-endpoint#test-part",
+      "agent_id": "does-not-exist"
+    },
+    "output": null,
+    "error": null
+  },
+  {
+    "method": "A2ATaskPGRepository.count (missing)",
+    "status": "pass",
+    "elapsed_ms": 3.61,
+    "scenario": "SOP-\u00a78-missing_data",
+    "arguments": {
+      "partition_key": "test-endpoint#test-part",
+      "task_id": "nope"
+    },
+    "output": 0,
+    "error": null
+  },
+  {
+    "method": "A2ASettingPGRepository.delete (nonexistent idempotent)",
+    "status": "pass",
+    "elapsed_ms": 1.88,
+    "scenario": "SOP-\u00a78-idempotent_delete",
+    "arguments": {
+      "setting_id": "never-created"
+    },
+    "output": true,
+    "error": null
+  },
+  {
+    "method": "A2AMessagePGRepository.insert_update (empty payload)",
+    "status": "pass",
+    "elapsed_ms": 7.39,
+    "scenario": "SOP-\u00a78-empty_payload",
+    "arguments": {
+      "payload": {},
+      "message_type": "empty"
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "message_id": "d54bc1c0-4a2d-4eb5-9aee-733a9862739c",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "from_agent_id": "a",
+      "to_agent_id": "b",
+      "message_type": "empty",
+      "payload": {},
+      "status": "sent",
+      "created_at": "2026-07-07 02:53:04.507511",
+      "delivered_at": null
+    },
+    "error": null
+  },
+  {
+    "method": "A2ATaskPGRepository.insert_update (recon)",
+    "status": "pass",
+    "elapsed_ms": 11.18,
+    "scenario": "SOP-\u00a79",
+    "arguments": {
+      "task_type": "recon",
+      "input_data": {
+        "k": "v"
+      }
+    },
+    "output": {
+      "partition_key": "test-endpoint#test-part",
+      "task_id": "71fc46c1-3ab1-4826-81a8-e2f38f55c266",
+      "endpoint_id": "test-endpoint",
+      "part_id": "test-part",
+      "task_type": "recon",
+      "assigned_agent_id": null,
+      "status": "SUBMITTED",
+      "priority": "medium",
+      "input_data": {
+        "k": "v"
+      },
+      "output_data": {},
+      "updated_by": "recon",
+      "created_at": "2026-07-07 02:53:04.659300",
+      "updated_at": "2026-07-07 02:53:04.659300",
+      "completed_at": null,
+      "context_id": null,
+      "created_at_sdk": "2026-07-07 02:53:04.659300",
+      "last_modified": "2026-07-07 02:53:04.659300"
+    },
+    "error": null
+  },
+  {
+    "method": "A2ATaskPGRepository.get (recon round-trip)",
+    "status": "pass",
+    "elapsed_ms": 1.21,
+    "scenario": "SOP-\u00a79",
+    "arguments": {
+      "partition_key": "test-endpoint#test-part",
+      "task_id": "71fc46c1-3ab1-4826-81a8-e2f38f55c266"
+    },
+    "output": {
+      "mismatches": {},
+      "fetched": {
+        "partition_key": "test-endpoint#test-part",
+        "task_id": "71fc46c1-3ab1-4826-81a8-e2f38f55c266",
+        "endpoint_id": "test-endpoint",
+        "part_id": "test-part",
+        "task_type": "recon",
+        "assigned_agent_id": null,
+        "status": "SUBMITTED",
+        "priority": "medium",
+        "input_data": {
+          "k": "v"
+        },
+        "output_data": {},
+        "updated_by": "recon",
+        "created_at": "2026-07-07 02:53:04.659300",
+        "updated_at": "2026-07-07 02:53:04.659300",
+        "completed_at": null,
+        "context_id": null,
+        "created_at_sdk": "2026-07-07 02:53:04.659300",
+        "last_modified": "2026-07-07 02:53:04.659300"
+      }
+    },
+    "error": null
+  }
+]

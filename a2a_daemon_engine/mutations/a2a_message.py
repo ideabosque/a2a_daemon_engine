@@ -5,7 +5,7 @@ import traceback
 from typing import Any
 
 from graphene import Boolean, Field, Mutation, String
-from silvaengine_utility import JSON
+from silvaengine_utility.graphql import JSON
 
 from ..models.dynamodb.a2a_message import delete_a2a_message, insert_update_a2a_message
 from ..types.a2a_message import A2AMessageType

@@ -181,6 +181,10 @@ class Config:
             cls.logger = logger
             cls.setting = setting
             cls._set_parameters(setting)
+            # Initialize PostgreSQL session before a2a_core/server so that
+            # PG-backed persistence is available when DB_BACKEND=postgresql.
+            if cls.DB_BACKEND == "postgresql":
+                cls._initialize_db_session(setting)
             cls._initialize_a2a_core(logger, setting)
             cls._initialize_a2a_server(logger, setting)
             cls._initialize_aws_services(logger, setting)
@@ -340,6 +344,41 @@ class Config:
             from ..models.dynamodb.utils import initialize_tables
 
             initialize_tables(logger)
+        elif cls.DB_BACKEND == "postgresql":
+            from ..models.postgresql.utils import initialize_tables as pg_init
+
+            pg_init(logger, cls.db_session)
+
+    @classmethod
+    def _initialize_db_session(cls, setting: Dict[str, Any]) -> None:
+        """Initialize the PostgreSQL database session using SQLAlchemy.
+
+        Expected setting keys: db_host, db_port, db_user, db_password, db_schema.
+        """
+        from urllib.parse import quote_plus
+
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import scoped_session, sessionmaker
+
+        password = quote_plus(setting["db_password"])
+        connection_string = (
+            f"postgresql+psycopg2://{setting['db_user']}:{password}"
+            f"@{setting['db_host']}:{setting['db_port']}/{setting['db_schema']}"
+        )
+
+        engine = create_engine(
+            connection_string,
+            pool_recycle=7200,
+            pool_size=30,
+            max_overflow=20,
+            pool_timeout=60,
+            pool_pre_ping=True,
+            echo=False,
+        )
+
+        cls.db_session = scoped_session(
+            sessionmaker(autocommit=False, autoflush=False, bind=engine)
+        )
 
     @classmethod
     def get_cache_name(cls, module_type: str, model_name: str) -> str:

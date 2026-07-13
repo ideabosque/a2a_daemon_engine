@@ -71,12 +71,22 @@ SETTING = {
     "jwt_secret_key": os.getenv(
         "jwt_secret_key", "test-secret-key-for-integration-testing-32chars"
     ),
+    "auth_provider": os.getenv("AUTH_PROVIDER", "local").lower(),
     "functs_on_local": {
         "a2a_core_graphql": {
             "module_name": "a2a_daemon_engine",
             "class_name": "A2ADaemonEngine",
         },
     },
+    # --- Dual-backend selection ---
+    "db_backend": os.getenv("db_backend", "dynamodb"),
+    # PostgreSQL connection (used only when db_backend=postgresql).
+    # PG_* env vars map to the setting keys Config._initialize_db_session reads.
+    "db_host": os.getenv("PG_HOST"),
+    "db_port": os.getenv("PG_PORT"),
+    "db_user": os.getenv("PG_USER"),
+    "db_password": os.getenv("PG_PASSWORD"),
+    "db_schema": os.getenv("PG_DB"),
 }
 
 # Pre-compute partition_key for test context
