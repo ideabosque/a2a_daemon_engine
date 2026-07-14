@@ -14,6 +14,8 @@ This executor follows the official pattern:
 """
 
 import logging
+import threading
+from dataclasses import dataclass
 from typing import Any
 
 # A2A SDK imports - Based on official samples
@@ -159,6 +161,17 @@ def _streaming_requested(
     return method in {"SendStreamingMessage", "sendStreamingMessage"}
 
 
+@dataclass
+class ActiveExternalRun:
+    """Per-task registry entry for an external (e.g. Hermes) run."""
+
+    task_id: str
+    agent_uuid: str = ""
+    run_id: str = ""
+    handler: Any = None
+    stream_event: threading.Event | None = None
+
+
 class A2ADaemonExecutor(AgentExecutor):
     """
     A2A Daemon Agent Executor following canonical A2A SDK pattern.
@@ -192,6 +205,11 @@ class A2ADaemonExecutor(AgentExecutor):
         self.config = config
         self.task_store = task_store
         self.streaming_manager = streaming_manager
+
+        # Per-task registry for external (e.g. Hermes) runs — maps task_id to
+        # the active external run so cancel/approval can be routed correctly.
+        self._active_external_runs: dict[str, ActiveExternalRun] = {}
+        self._external_runs_lock = threading.Lock()
 
     async def execute(
         self, request_context: RequestContext, event_queue: EventQueue
@@ -232,6 +250,13 @@ class A2ADaemonExecutor(AgentExecutor):
             self.logger.info(
                 f"Executing operation '{operation}' for partition: {partition_key}"
             )
+
+            # Phase 4: approval passthrough for external (Hermes) runs
+            if operation == "approval_response":
+                await self._handle_approval_response(
+                    partition_key, request_context, event_queue
+                )
+                return
 
             # Route to appropriate handler based on operation
             if operation == "task_execution":
@@ -398,6 +423,7 @@ class A2ADaemonExecutor(AgentExecutor):
                         thread_uuid=thread_uuid,
                         run_uuid=run_uuid,
                         logger=self.logger,
+                        on_run_id=self._on_external_run_id,
                     )
                     if result.error:
                         await _emit_event(
@@ -406,8 +432,8 @@ class A2ADaemonExecutor(AgentExecutor):
                         )
                     return
                 else:
-                    # Emit working status before LLM call
-                    await _emit_event(event_queue, _status_update_event(_task_state("WORKING")))
+                    # Non-streaming path — no WORKING status (SDK v2 rejects
+                    # TaskStatusUpdateEvent in message/send mode).
                     result = await execute_ai_agent_non_streaming(
                         partition_key=partition_key,
                         agent_uuid=agent_uuid,
@@ -422,14 +448,12 @@ class A2ADaemonExecutor(AgentExecutor):
                         event_queue,
                         _agent_text_message(f"AI agent error: {result.error}"),
                     )
-                    await _emit_event(
-                        event_queue, _status_update_event(_task_state("FAILED"))
-                    )
                 else:
                     await _emit_event(event_queue, _agent_text_message(result.content))
-                    await _emit_event(
-                        event_queue, _status_update_event(_task_state("COMPLETED"))
-                    )
+                # NOTE: No COMPLETED/FAILED status events emitted here — the A2A
+                # SDK v2 on_message_send rejects TaskStatusUpdateEvent.  Status
+                # events are only emitted for the SDK's native streaming path
+                # (send_streaming_message), not for message/send.
                 return
             except Exception as e:
                 self.logger.warning(
@@ -540,6 +564,142 @@ class A2ADaemonExecutor(AgentExecutor):
 
         self.logger.info(f"Agent {result.get('id')} registered successfully")
 
+    async def _handle_approval_response(
+        self,
+        partition_key: str,
+        request_context: RequestContext,
+        event_queue: EventQueue,
+    ) -> None:
+        """Resolve a pending human approval for an external (Hermes) run."""
+        task_id = _context_get_any(
+            request_context,
+            "task_id",
+            "taskId",
+            "id",
+        )
+        approved = _truthy_option(
+            _context_get_any(
+                request_context,
+                "approved",
+                "approval",
+                default=False,
+            )
+        )
+        reason = _context_get_any(
+            request_context,
+            "reason",
+            "approval_reason",
+            default="",
+        )
+
+        if not task_id:
+            await _emit_event(
+                event_queue,
+                _agent_text_message("Approval response missing task_id"),
+            )
+            await _emit_event(
+                event_queue, _status_update_event(_task_state("FAILED"))
+            )
+            return
+
+        resolved = await self._resolve_external_approval(
+            task_id, approved, reason or ""
+        )
+        if resolved:
+            self.logger.info(
+                f"Approval resolved for task {task_id}: approved={approved}"
+            )
+            await _emit_event(
+                event_queue,
+                _agent_text_message(
+                    f"Approval {'granted' if approved else 'rejected'} for task {task_id}"
+                ),
+            )
+        else:
+            self.logger.warning(
+                f"No pending external approval found for task {task_id}"
+            )
+            await _emit_event(
+                event_queue,
+                _agent_text_message(
+                    f"No pending approval found for task {task_id}"
+                ),
+            )
+            await _emit_event(
+                event_queue, _status_update_event(_task_state("FAILED"))
+            )
+            return
+
+        await _emit_event(
+            event_queue, _status_update_event(_task_state("COMPLETED"))
+        )
+
+    # ------------------------------------------------------------------
+    # Per-task external-run registry (Phase 4: Hermes cancel/approval)
+    # ------------------------------------------------------------------
+
+    def _on_external_run_id(
+        self,
+        task_id: str,
+        run_id: str,
+        handler: Any,
+        stream_event: threading.Event,
+    ) -> None:
+        """Bridge callback: register a freshly-drained external run_id."""
+        if not task_id or not run_id:
+            return
+        entry = ActiveExternalRun(
+            task_id=task_id,
+            run_id=run_id,
+            handler=handler,
+            stream_event=stream_event,
+        )
+        with self._external_runs_lock:
+            self._active_external_runs[task_id] = entry
+        self.logger.info(
+            f"Registered external run {run_id} for task {task_id}"
+        )
+
+    def _unregister_external_run(self, task_id: str) -> None:
+        with self._external_runs_lock:
+            self._active_external_runs.pop(task_id, None)
+
+    async def _cancel_external_run(self, task_id: str) -> bool:
+        """Cancel an external run via the handler's cancel_run() if present."""
+        with self._external_runs_lock:
+            run = self._active_external_runs.get(task_id)
+        if not run or not hasattr(run.handler, "cancel_run"):
+            return False
+
+        import asyncio
+
+        await asyncio.get_running_loop().run_in_executor(
+            None, run.handler.cancel_run, run.run_id
+        )
+        if run.stream_event:
+            run.stream_event.set()
+        self._unregister_external_run(task_id)
+        return True
+
+    async def _resolve_external_approval(
+        self,
+        task_id: str,
+        approved: bool,
+        reason: str = "",
+    ) -> bool:
+        """Resolve a pending human approval via the handler's method."""
+        with self._external_runs_lock:
+            run = self._active_external_runs.get(task_id)
+        if not run or not hasattr(run.handler, "resolve_approval"):
+            return False
+
+        import asyncio
+
+        await asyncio.get_running_loop().run_in_executor(
+            None, run.handler.resolve_approval, run.run_id, approved, reason
+        )
+        return True
+
     async def cancel(self, task_id: str) -> None:
         """
         Cancel running task.
@@ -553,6 +713,10 @@ class A2ADaemonExecutor(AgentExecutor):
         self.logger.info(f"Cancelling task: {task_id}")
 
         try:
+            # Phase 4: cancel the external (Hermes) run first so the SSE
+            # stream unblocks and the task-store cancellation can persist.
+            await self._cancel_external_run(task_id)
+
             if not self.task_store:
                 raise ValueError(
                     "Task store not available - cannot cancel task. "

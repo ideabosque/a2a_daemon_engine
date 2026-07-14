@@ -286,200 +286,270 @@ Removed protocol surfaces:
 | gRPC adapter | Experimental | JSON-over-gRPC remains available for transport experimentation. |
 | SSE infra fixes | Done | `a2a_sse.py` now skips the `None` sentinel, emits idle keep-alive comments, supports TTL cleanup for stale buffers, and registers routes through `app.add_route()` when available. |
 | Dual event paths unconnected | Phase 10 | `SSEEventQueue` and SDK `EventQueue` are still parallel paths. Phase 10 streaming bridge must feed both; the SSE endpoint is now ready for `SubscribeToTask` reconnection traffic. |
-| AI engine integration (non-streaming) | Phase 10 | Bridge utility to invoke `ai_agent_core_engine` LLM handlers for `SendMessage` requests with full persistence. |
-| AI engine integration (streaming) | Phase 10 | Streaming bridge using `threading.Queue` to emit chunks to both SDK `EventQueue` and `SSEEventQueue`. |
+| AI engine integration (non-streaming) | Phase 10 | Gateway-mediated GraphQL bridge to invoke `ai_agent_core_engine` `ask_model` for `SendMessage` requests with full persistence. |
+| AI engine integration (streaming) | Phase 10 | Gateway-mediated WebSocket bridge using `threading.Queue` to emit chunks to both SDK `EventQueue` and `SSEEventQueue`. |
 
-## Phase 10: ai_agent_core_engine Integration
+## Phase 10: Gateway-Mediated ai_agent_core_engine Integration
 
-**Status:** Complete
+**Status:** Planned
 
-**Current code state:** Phase 10 is fully implemented. The bridge module
-`a2a_ai_agent_utility.py` provides `resolve_agent`, `load_agent_handler`,
-`build_input_messages`, `create_core_engine_context`, `normalize_final_output`,
-`execute_ai_agent_non_streaming`, and `execute_ai_agent_streaming` with
-dual-path emission to both SDK `EventQueue` and `SSEEventQueue`. The executor
-wires both `_handle_message_response` and `_handle_task_execution` into the
-bridge with fallback to legacy paths. Config has `a2a_ai_agent_module`,
-`a2a_ai_agent_class`, `a2a_default_agent_uuid`, `a2a_stream_timeout`,
-`a2a_streaming_enabled` env-var overrides and a `phase10_available` readiness
-flag. Tests are in `tests/test_phase10.py`.
+### Motivation
 
-### Problem
+The A2A daemon needs to invoke `ai_agent_core_engine` for LLM-backed `SendMessage`
+and `SendStreamingMessage` requests. Rather than importing the core engine's
+handler classes in-process (which couples the two modules and assumes a shared
+Python runtime), all communication goes **through `silvaengine_gateway`** using
+its public transport contracts. This decouples A2A from core-engine internals
+and lets the core engine evolve independently.
 
-The daemon's SSE streaming infrastructure (`a2a_sse.py`) and the core engine's
-LLM execution layer (`ai_agent_core_engine`) were completely disconnected:
+Two distinct gateway transports are used, selected by request mode:
 
-- **ai_agent_core_engine** streams LLM output via a synchronous
-  `threading.Thread` + `Queue` pattern (`stream_queue` / `stream_event`) and
-  delivers WebSocket chunks through AWS API Gateway
-  (`Config.apigw_client.post_to_connection`). It has no concept of A2A protocol
-  events.
+| Mode | Outbound Transport | Gateway Route |
+| --- | --- | --- |
+| **Non-streaming** (`SendMessage`) | **GraphQL** | `POST /{ep}/ai_agent_core_graphql` (gateway GraphQL mutations) |
+| **Streaming** (`SendStreamingMessage`) | **WebSocket** | `/{ep}/ai_agent_core_ws` |
 
-- **a2a_daemon_engine** has an `SSEEventQueue` + `StreamingTaskManager` for
-  SSE broadcasting and an A2A SDK `EventQueue` for protocol-level streaming,
-  but neither received data from the core engine. The executor previously had a
-  TODO stub (`a2a_executor.py:267`) where real LLM invocation should happen.
+Client-facing streaming back to the A2A caller continues to use **SSE**
+(the `/{ep}/a2a_sse` gateway route) — the daemon's existing streaming surface —
+so no new client-facing transport is introduced.
 
-The result: task execution always emitted static text responses; no LLM output
-flowed through A2A streaming.
+### Transport Topology
 
-**Resolution:** The Phase 10 bridge intercepts the core engine's `stream_queue`
-directly in-process, re-routing chunks into both A2A protocol channels without
-requiring API Gateway or WebSocket. The TODO stub has been replaced with
-conditional bridge invocation that falls back to legacy paths when the core
-engine is unavailable.
+| Leg | Direction | Transport | Gateway Route |
+| --- | --- | --- | --- |
+| Inbound | A2A client → `a2a_daemon_engine` | REST (JSON-RPC) + SSE | `POST /{ep}/a2a`, `GET/POST /{ep}/a2a_sse` |
+| Outbound (non-streaming) | `a2a_daemon_engine` → `ai_agent_core_engine` | **GraphQL** | `POST /{ep}/ai_agent_core_graphql` |
+| Outbound (streaming) | `a2a_daemon_engine` → `ai_agent_core_engine` | **WebSocket** | `/{ep}/ai_agent_core_ws` |
 
-### Architecture
+### Architecture — Non-Streaming (GraphQL)
 
 ```mermaid
 sequenceDiagram
     participant C as A2A Client
-    participant SDK as SDK Starlette App
-    participant RH as DefaultRequestHandler
+    participant GW as silvaengine_gateway
     participant EX as A2ADaemonExecutor
-    participant BR as Bridge Utility
+    participant H as CoreEngineAgentHandler
+    participant GQL as Gateway GraphQL (/ai_agent_core_graphql)
     participant CE as ai_agent_core_engine
     participant TS as DynamoDBA2ATaskStore
-    participant SSE as SSEEventQueue
 
-    C->>SDK: POST / SendMessage
-    SDK->>RH: SDK request + EventQueue
-    RH->>EX: execute(RequestContext, EventQueue)
-    EX->>BR: execute_ai_agent_non_streaming(...)
-    BR->>CE: resolve agent + handler.ask_model(messages)
-    CE-->>BR: final_output (content, role, message_id)
-    BR-->>EX: Message + COMPLETED
-    EX->>TS: persist task
-
-    Note over C,SSE: Streaming path:
-
-    C->>SDK: POST / SendStreamingMessage
-    SDK->>RH: SDK request + EventQueue
-    RH->>EX: execute(RequestContext, EventQueue)
-    EX->>BR: execute_ai_agent_streaming(...)
-    BR->>CE: resolve agent + handler.ask_model(messages, stream_queue, stream_event)
-    CE-->>BR: stream_queue chunks (threading.Queue)
-    BR-->>EX: per-chunk: Message → SDK EventQueue
-    BR-->>SSE: per-chunk: SSEEvent → SSEEventQueue
-    EX-->>SDK: aggregated streaming response to client
-    CE-->>BR: stream_event.set() (completion)
-    BR-->>EX: final result + COMPLETED
-    EX->>TS: persist task
-    EX-->>SDK: final response
+    C->>GW: POST /{ep}/a2a  (message/send)
+    GW->>EX: dispatch_a2a → execute(RequestContext, EventQueue)
+    EX->>H: resolve_agent → ask_model(input_messages, context)
+    H->>GQL: POST mutation { ask_model(agent_uuid, thread_uuid, user_query, stream:false) }
+    GQL->>CE: dispatch_ask_model (synchronous)
+    CE-->>GQL: final_output { content, role, message_id, output_files }
+    GQL-->>H: GraphQL response (normalized)
+    H-->>EX: { content, role, message_id, output_files }
+    EX->>TS: persist task + thread/run/message
+    EX-->>GW: A2A Message (role=agent) + COMPLETED
+    GW-->>C: JSON-RPC response
 ```
+
+### Architecture — Streaming (WebSocket)
+
+```mermaid
+sequenceDiagram
+    participant C as A2A Client
+    participant GW as silvaengine_gateway
+    participant EX as A2ADaemonExecutor
+    participant H as CoreEngineAgentHandler
+    participant WS as Gateway WS (/ai_agent_core_ws)
+    participant CE as ai_agent_core_engine
+
+    C->>GW: POST /{ep}/a2a  (message/stream)
+    GW->>EX: dispatch_a2a → execute(RequestContext, EventQueue)
+    EX->>H: resolve_agent → ask_model(..., stream_queue, stream_event)
+    H->>WS: ws connect + {"action":"ask_model","arguments":{user_query, thread_uuid, stream:true}}
+    WS->>CE: dispatch_ask_model (thread pool)
+    CE-->>WS: send_data_to_stream → {chunk_delta, is_message_end}
+    WS-->>H: WS frames (chunk_delta ...)
+    H-->>EX: stream_queue chunks {"name":"token","value":delta}
+    EX-->>GW: dual-path: SDK EventQueue + SSE broadcast (broadcast_to_partition)
+    GW-->>C: GET /{ep}/a2a_sse  (live task_artifact / task_status events)
+    CE-->>WS: is_message_end=true
+    H-->>EX: stream_event.set() + aggregated content
+    EX-->>GW: COMPLETED
+```
+
+### Handler Plugin Contract
+
+The new `CoreEngineAgentHandler` (`handlers/a2a_core_engine_handler.py`)
+implements the **same narrow bridge contract** as `HermesAgentHandler`, so the
+executor and `a2a_ai_agent_utility.py` streaming/persistence machinery are
+reused unchanged:
+
+- `__init__(logger, agent_config, setting, context, ws_connect=None, graphql_client=None)` —
+  the optional `ws_connect` factory allows a mock WebSocket in tests and
+  `graphql_client` allows a mock GraphQL transport (parity with Hermes's
+  injectable `http_transport`).
+- `ask_model(input_messages, context, stream_queue=None, stream_event=None)` —
+  streaming via WebSocket when `stream_queue` is provided, otherwise a single
+  aggregated GraphQL mutation response dict `{content, role, metadata, error?}`.
+- Optional `cancel_run(run_id)` / `resolve_approval(run_id, approved, reason)`
+  for cancel and human-in-the-loop passthrough.
+
+Selection is per-agent via registry metadata (no executor change):
+
+```
+module_name: "a2a_daemon_engine.handlers.a2a_core_engine_handler"
+class_name:  "CoreEngineAgentHandler"
+```
+
+### Gateway GraphQL Protocol (Non-Streaming)
+
+The handler sends a GraphQL mutation to the gateway's
+`/{endpoint_id}/ai_agent_core_graphql` route, which dispatches
+`ask_model` synchronously to `ai_agent_core_engine` and returns the
+aggregated final output.
+
+| Step | Description |
+| --- | --- |
+| Request | `POST /{ep}/ai_agent_core_graphql` with mutation `ask_model(agent_uuid, thread_uuid, user_query, updated_by, stream:false)` |
+| Response | `{ "data": { "ask_model": { "content": "...", "role": "assistant", "message_id": "...", "output_files": [...] } } }` |
+| Error | `{ "errors": [{ "message": "..." }] }` |
+
+The handler normalizes the GraphQL response into daemon-owned fields via
+`normalize_final_output`.
+
+### Gateway WebSocket Protocol (Streaming)
+
+Reference client: `silvaengine_gateway/tests/chat_websocket.py`.
+
+| Step | Frame |
+| --- | --- |
+| Connect | `ws://<gw-host>:<port>/{endpoint_id}/ai_agent_core_ws?token=<jwt>&part_id=<tenant>` |
+| Server ack | `{"type":"connection_ack","connection_id":"..."}` |
+| Request | `{"action":"ask_model","arguments":{"agent_uuid","thread_uuid","user_query","updated_by","stream":true}}` |
+| Stream chunk | `{"chunk_delta":"...","data_format":"text"|"xml","is_message_end":false}` |
+| Stream end | frame with `"is_message_end":true` |
+| Error | `{"type":"error","detail":"..."}` |
+
+The handler translates each `chunk_delta` frame into a `stream_queue`
+`{"name":"token","value":delta}` chunk and stops on `is_message_end` / error,
+setting `stream_event` — identical downstream handling to the Hermes handler.
+
+### A2A State Mapping
+
+| Gateway frame / response | A2A Task State | Bridge action |
+| --- | --- | --- |
+| WS `connection_ack` / GraphQL 200 OK | `WORKING` | Connection/request established; begin run |
+| WS `chunk_delta` (text) | `WORKING` | `token` chunk → A2A text artifact (SDK + SSE) |
+| WS `chunk_delta` (xml / reasoning) | `WORKING` | `token` chunk, tagged by `data_format` |
+| GraphQL `ask_model` result | `COMPLETED` | Normalize output; persist final message |
+| WS `is_message_end=true` | `COMPLETED` | Set `stream_event`; persist final message |
+| WS `{"type":"error"}` / GraphQL errors | `FAILED` | `error` chunk; set `FAILED` |
+| `tasks/cancel` (from A2A client) | `CANCELED` | Close WS; `stream_event.set()` |
+
+### Bridge Utility — Agent Resolution and Persistence
+
+The existing `handlers/a2a_ai_agent_utility.py` provides the foundational
+functions used by **both** the non-streaming and streaming paths:
+
+| Function | Description |
+| --- | --- |
+| `resolve_agent(partition_key, agent_uuid)` | Query `Config.a2a_core` GraphQL to fetch the full agent configuration record, including LLM module name, class name, and agent-level settings. |
+| `build_input_messages(partition_key, thread_uuid, num_of_messages, tool_call_role)` | Fetch conversation history from the core engine's message and tool-call stores so the LLM receives the same context it would in the core engine. |
+| `normalize_final_output(output)` | Validate and normalize output into daemon-owned fields: `content`, `role`, `message_id`, `output_files`, `metadata`, and optional `error`. |
+| `persist_thread_run_message(...)` | Persist thread, run, and message records through gateway GraphQL mutations, mirroring the core engine's `insert_update_thread` / `insert_update_run` / `insert_update_message` sequence. |
+
+The `load_agent_handler` and `create_core_engine_context` functions from the
+old in-process bridge are **removed** — the handler no longer imports
+core-engine internals. Instead, `CoreEngineAgentHandler` encapsulates all
+core-engine communication over gateway transports.
 
 ### Tasks
 
 #### 10.0 Preflight and Compatibility Contract
 
-Before implementing the bridge, capture the exact local contract exposed by
-`ai_agent_core_engine`. This should be a small compatibility layer, not a broad
-import of core-engine internals.
-
 | Sub-task | Description |
 | --- | --- |
-| 10.0.1 | Verify the installed/importable `ai_agent_core_engine` package and record the handler constructor signature, `ask_model(...)` signature, stream chunk shape, timeout behavior, and final output shape in `tests/test_phase10.py` fixtures or comments. |
+| 10.0.1 | Verify the gateway GraphQL `ask_model` mutation schema and the WebSocket `ask_model` action contract. Record signatures, chunk shape, timeout behavior, and final output shape in `tests/test_phase10.py` fixtures. |
 | 10.0.2 | Define request metadata accepted by the executor: `agent_uuid`/`agentId`, `thread_uuid`/`threadId`, `run_uuid`/`runId`, `stream`, `streaming`, and `task_data`. Keep `dry_run` behavior unchanged. |
-| 10.0.3 | Define the bridge result dataclasses or typed dicts used internally by the daemon, so executor code does not depend directly on core-engine return dictionaries. |
-| 10.0.4 | Add graceful fallback behavior when the core engine package is not installed: configuration validation should report Phase 10 as unavailable, while existing dry-run and task-assignment paths continue to work. |
+| 10.0.3 | Define the bridge result dataclasses or typed dicts used internally by the daemon, so executor code does not depend directly on gateway response dictionaries. |
+| 10.0.4 | Add graceful fallback behavior when the gateway is unreachable: configuration validation should report Phase 10 as unavailable, while existing dry-run and task-assignment paths continue to work. |
 
-#### 10.1 Bridge Utility — Agent Resolution and Handler Loading
+#### 10.1 Handler Plugin — CoreEngineAgentHandler
 
-Create a new module `handlers/a2a_ai_agent_utility.py` with the foundational
-functions needed by *both* the non-streaming and streaming paths.
-
-| Sub-task | Description |
-| --- | --- |
-| 10.1.1 | `resolve_agent(partition_key, agent_uuid)` — Query `Config.a2a_core` GraphQL to fetch the full agent configuration record, including LLM module name (`module_name`), LLM handler class name (`class_name`), and agent-level settings (instructions, num_of_messages, tool_call_role, mcp_servers). |
-| 10.1.2 | `load_agent_handler(agent_config, context_setting)` — Instantiate the AI agent handler using the same dynamic-loading mechanism as `ai_agent_core_engine` when available, with a narrow `importlib` fallback. Inject only the fields the handler contract requires: logger, agent config, setting, and context. |
-| 10.1.3 | `build_input_messages(partition_key, thread_uuid, num_of_messages, tool_call_role)` — Fetch conversation history from the core engine's message and tool-call stores so the LLM receives the same context it would in the core engine. This is needed for both non-streaming and streaming paths. |
-| 10.1.4 | `create_core_engine_context(partition_key, setting, **kwargs)` — Assemble a minimal `ResolveInfo`-compatible context dict (containing `logger`, `setting`, `endpoint_id`, `part_id`, `partition_key`, `connection_id`, `context`) that the core engine's handler expects. Uses `create_listener_info` from `ai_agent_core_engine.utils.listener` when available, falls back to manual assembly otherwise. |
-| 10.1.5 | `normalize_final_output(output)` — Validate and normalize core-engine output into daemon-owned fields: `content`, `role`, `message_id`, `output_files`, `metadata`, and optional `error`. |
-
-#### 10.2 Non-Streaming Integration
-
-Invoke the core engine's LLM handler in a single-request/response mode and
-return the final result as an A2A message. This is the production path for
-all `SendMessage` calls that do not request streaming, and is the foundation
-that streaming builds upon.
+Create `handlers/a2a_core_engine_handler.py` implementing the narrow bridge
+contract over gateway transports.
 
 | Sub-task | Description |
 | --- | --- |
-| 10.2.1 | `execute_ai_agent_non_streaming(partition_key, agent_uuid, user_query, ...)` — Full lifecycle: resolve agent (10.1.1), load handler (10.1.2), build messages (10.1.3), call `handler.ask_model(input_messages)` synchronously, normalize output (10.1.5), and return a daemon-owned result object. |
-| 10.2.2 | Wire the non-streaming path into `A2ADaemonExecutor._handle_task_execution()` — replace the TODO stub at `a2a_executor.py:265-269`. When the request context does not indicate streaming, call `execute_ai_agent_non_streaming`, then emit the text result as `_agent_text_message(...)` and a `COMPLETED` status. |
-| 10.2.3 | Wire the non-streaming path into `_handle_message_response()` — pass `request_context` into the handler, resolve the agent UUID from request metadata (or fall back to `A2A_DEFAULT_AGENT_UUID`), invoke the LLM, and return the response text. |
-| 10.2.4 | Persist thread, run, and message records through `Config.a2a_core` GraphQL mutations after each non-streaming invocation, mirroring the core engine's `insert_update_thread` / `insert_update_run` / `insert_update_message` sequence. |
-| 10.2.5 | Error mapping — agent-not-found, LLM timeout, handler import failure, and invalid-response errors all map to an A2A `FAILED` status event with a descriptive error message. Include error classification in the event metadata. |
-| 10.2.6 | Non-streaming response format — The non-streaming `SendMessage` response must contain the full LLM output in a single A2A `Message` with `role=ROLE_AGENT`. Ensure `final_output` dict keys (`content`, `role`, `message_id`, `output_files`) are correctly mapped to A2A `Part` objects. |
+| 10.1.1 | `CoreEngineAgentHandler.__init__(logger, agent_config, setting, context, ws_connect=None, graphql_client=None)` — accept injectable transports for testing. |
+| 10.1.2 | `ask_model(input_messages, context, stream_queue=None, stream_event=None)` — streaming via WebSocket when `stream_queue` is provided; non-streaming via GraphQL mutation otherwise. |
+| 10.1.3 | Non-streaming: POST GraphQL mutation to `/{ep}/ai_agent_core_graphql`, parse response, normalize via `normalize_final_output`. |
+| 10.1.4 | Streaming: connect to `/{ep}/ai_agent_core_ws`, send `ask_model` action, drain WS frames into `stream_queue` as `{"name":"token","value":delta}` chunks, stop on `is_message_end` or error. |
+| 10.1.5 | Optional `cancel_run(run_id)` — close WS and set `stream_event` for streaming; no-op for non-streaming (already returned). |
+| 10.1.6 | Optional `resolve_approval(run_id, approved, reason)` — send approval response via gateway GraphQL mutation. |
 
-#### 10.3 Streaming Integration
-
-Invoke the core engine's LLM handler with a `threading.Queue` /
-`threading.Event` pair and convert each chunk into A2A protocol events
-as they arrive.
+#### 10.2 Executor Wiring
 
 | Sub-task | Description |
 | --- | --- |
-| 10.3.1 | `execute_ai_agent_streaming(partition_key, agent_uuid, user_query, event_queue, streaming_manager, ...)` — Full lifecycle: resolve agent (10.1.1), load handler (10.1.2), build messages (10.1.3), create `Queue()` + `Event()`, run `handler.ask_model` in a background thread, drain the queue, and convert each chunk into A2A protocol events. |
-| 10.3.2 | Thread-to-async adapter — Implement `async def _drain_stream_queue(stream_queue, stream_event, event_queue, streaming_manager, task_id)` that uses `asyncio.get_running_loop().run_in_executor(None, stream_queue.get, True, 0.1)` to poll the synchronous queue without blocking the event loop. |
-| 10.3.3 | Chunk-to-event conversion — Each queue item is a dict with `name` and `value` keys. Map `name="token"` chunks to `_agent_text_message(value)` and emit into the SDK `EventQueue`. Map `name="run_id"` to metadata (skip emitting as a message). Map `name="error"` to `FAILED` status. |
-| 10.3.4 | Wire the streaming path into `A2ADaemonExecutor._handle_task_execution()` — When the request context or SDK method indicates streaming (`SendStreamingMessage`, `stream`, or `streaming` metadata), call `execute_ai_agent_streaming` instead of the non-streaming path. |
-| 10.3.5 | Thread lifecycle management — Ensure the background `threading.Thread` is daemonized, has a timeout (default 120s matching the core engine), and that `stream_event` is always set on error or cancellation to prevent queue-drain hangs. |
-| 10.3.6 | Persist thread, run, and message records after streaming completes — same pattern as 10.2.4 but deferred until `stream_event.wait()` returns. |
+| 10.2.1 | Wire the non-streaming path into `A2ADaemonExecutor._handle_message_response()` and `_handle_task_execution()` — resolve agent UUID from request metadata (or fall back to `A2A_DEFAULT_AGENT_UUID`), invoke `handler.ask_model` (GraphQL), emit text result as `_agent_text_message(...)` + `COMPLETED`. |
+| 10.2.2 | Wire the streaming path into `A2ADaemonExecutor._handle_task_execution()` — when request context indicates streaming (`SendStreamingMessage`, `stream`, or `streaming` metadata), call `handler.ask_model` with `stream_queue` + `stream_event`. |
+| 10.2.3 | Thread-to-async adapter — `async def _drain_stream_queue(...)` polls the synchronous `stream_queue` via `run_in_executor` without blocking the event loop. |
+| 10.2.4 | Thread lifecycle — background thread is daemonized, has a timeout (default `core_engine_stream_timeout`), and `stream_event` is always set on error or cancellation. |
+| 10.2.5 | Persist thread, run, and message records through gateway GraphQL mutations after each invocation (both streaming and non-streaming). |
+| 10.2.6 | Error mapping — agent-not-found, gateway timeout, GraphQL errors, WS errors, and invalid-response all map to A2A `FAILED` status with descriptive error message and classification metadata. |
 
-#### 10.4 Dual-Path Streaming Emission
+#### 10.3 Dual-Path Streaming Emission
 
 Ensure every chunk emitted by the streaming bridge reaches both A2A
 protocol consumers and SSE reconnection subscribers.
 
 | Sub-task | Description |
 | --- | --- |
-| 10.4.1 | In the streaming bridge, emit each text chunk into the **SDK `EventQueue`** as an A2A `Message` (via `_emit_event` + `_agent_text_message`). This serves `SendStreamingMessage` clients. |
-| 10.4.2 | In the streaming bridge, emit each text chunk into the **`SSEEventQueue`** via `streaming_manager.emit_task_artifact()`. This serves `SubscribeToTask` and `/tasks/{task_id}/stream` reconnection clients. |
-| 10.4.3 | On stream completion, emit `COMPLETED` status to both the SDK `EventQueue` and `SSEEventQueue.emit_task_status()`. On error, emit `FAILED`. |
-| 10.4.4 | On `INPUT_REQUIRED` or `AUTH_REQUIRED` transitions from the core engine, map those to the corresponding A2A task states. |
+| 10.3.1 | Emit each text chunk into the **SDK `EventQueue`** as an A2A `Message` (via `_emit_event` + `_agent_text_message`). This serves `SendStreamingMessage` clients. |
+| 10.3.2 | Emit each text chunk into the **`SSEEventQueue`** via `streaming_manager.emit_task_artifact()`. This serves `SubscribeToTask` and `/tasks/{task_id}/stream` reconnection clients. |
+| 10.3.3 | On stream completion, emit `COMPLETED` to both SDK `EventQueue` and `SSEEventQueue.emit_task_status()`. On error, emit `FAILED`. |
+| 10.3.4 | On `INPUT_REQUIRED` or `AUTH_REQUIRED` transitions from the core engine, map those to the corresponding A2A task states. |
 
-#### 10.5 Configuration
-
-| Sub-task | Description |
-| --- | --- |
-| 10.5.1 | Add `ai_agent_core_setting` dict to `Config` holding module paths, class names, and connection parameters needed to invoke the core engine's AI agent handler. |
-| 10.5.2 | Document required settings in `AGENTS.md` (e.g., `A2A_AI_AGENT_MODULE`, `A2A_AI_AGENT_CLASS`, `A2A_DEFAULT_AGENT_UUID`). |
-| 10.5.3 | Add environment-variable overrides for dev vs. production (e.g., disable streaming for local dev, set `stream_timeout` defaults, allow non-streaming-only mode). |
-| 10.5.4 | Expose a startup/readiness flag for Phase 10 availability so tests and operators can distinguish "core engine not configured" from request-time LLM failure. |
-
-#### 10.6 Tests
+#### 10.4 Configuration
 
 | Sub-task | Description |
 | --- | --- |
-| 10.6.1 | `tests/test_phase10.py` — Unit tests for preflight compatibility, `resolve_agent`, `load_agent_handler`, `create_core_engine_context`, `build_input_messages`, and `normalize_final_output` with mocked core engine. |
-| 10.6.2 | Non-streaming integration test — call `execute_ai_agent_non_streaming` with a mock handler returning `final_output`, verify the A2A `Message` and `COMPLETED` status are emitted correctly. |
-| 10.6.3 | Streaming integration test — call `execute_ai_agent_streaming` with a mock `threading.Queue` producing chunks, verify that: (a) each chunk is emitted to SDK `EventQueue`, (b) each chunk is broadcast to `SSEEventQueue`, (c) `COMPLETED` or `FAILED` is the final state. |
-| 10.6.4 | Live API test — send `SendMessage` (non-streaming) to a running daemon and verify a single complete response is returned. |
-| 10.6.5 | Live API test — send `SendStreamingMessage` to a running daemon and verify chunked text responses arrive over SSE. |
-| 10.6.6 | Test error paths: agent-not-found, LLM timeout, LLM error, invalid `final_output` — verify `FAILED` state propagation for both non-streaming and streaming paths. |
-| 10.6.7 | Test persistence — verify thread, run, and message records are created in DynamoDB after both non-streaming and streaming invocations. |
+| 10.4.1 | Add `core_engine_*` settings to `Config._set_parameters` with env-var overrides and per-agent metadata injection (same pattern as `hermes_*`). |
+| 10.4.2 | Document required settings in `AGENTS.md` (e.g., `CORE_ENGINE_WS_URL`, `CORE_ENGINE_TOKEN`, `CORE_ENGINE_GRAPHQL_URL`, `CORE_ENGINE_AGENT_UUID`). |
+| 10.4.3 | Add environment-variable overrides for dev vs. production (e.g., disable streaming for local dev, set `stream_timeout` defaults, allow non-streaming-only mode). |
+| 10.4.4 | Expose a startup/readiness flag for Phase 10 availability so tests and operators can distinguish "gateway not configured" from request-time LLM failure. |
+
+#### 10.5 Tests
+
+| Sub-task | Description |
+| --- | --- |
+| 10.5.1 | `tests/test_phase10.py` — Unit tests for preflight compatibility, `resolve_agent`, `build_input_messages`, `normalize_final_output`, and `persist_thread_run_message` with mocked gateway. |
+| 10.5.2 | Non-streaming unit test — mock `graphql_client` returns `final_output`, verify A2A `Message` + `COMPLETED` emitted correctly. |
+| 10.5.3 | Streaming unit test — mock `ws_connect` produces `chunk_delta` frames, verify: (a) each chunk → SDK `EventQueue`, (b) each chunk → `SSEEventQueue`, (c) `COMPLETED` or `FAILED` is final state. |
+| 10.5.4 | Live API test — send `SendMessage` (non-streaming) to a running daemon and verify a single complete response is returned. |
+| 10.5.5 | Live API test — send `SendStreamingMessage` to a running daemon and verify chunked text responses arrive over SSE. |
+| 10.5.6 | Test error paths: agent-not-found, gateway timeout, GraphQL errors, WS error frame, invalid response — verify `FAILED` propagation for both non-streaming and streaming. |
+| 10.5.7 | Test persistence — verify thread, run, and message records are created after both non-streaming and streaming invocations. |
+| 10.5.8 | Test cancel passthrough — `tasks/cancel` closes the WS and sets `stream_event` for streaming; verify `CANCELED` state. |
 
 ### Implementation Order
 
-1. **10.0** (Preflight contract) — Confirm core-engine imports, signatures, chunk shape, final output shape, and fallback behavior.
-2. **10.1** (Bridge foundation) — Agent resolution, handler loading, context assembly, message building, output normalization.
-3. **10.2** (Non-streaming integration) — End-to-end LLM invocation with full persistence and error handling.
-4. **10.3** (Streaming integration) — Adds chunk-by-chunk emission on top of the bridge foundation.
-5. **10.4** (Dual-path emission) — Ensures both SSE and SDK paths receive streaming chunks.
-6. **10.5** (Configuration) — Factor out hardcoded values and expose readiness.
-7. **10.6** (Tests) — Written incrementally alongside each sub-task.
+1. **10.0** (Preflight contract) — Confirm gateway GraphQL `ask_model` mutation schema and WS action contract.
+2. **10.1** (Handler plugin) — `CoreEngineAgentHandler` with GraphQL non-streaming + WS streaming, injectable transports for tests.
+3. **10.2** (Executor wiring) — Wire non-streaming and streaming paths into the executor with persistence and error handling.
+4. **10.3** (Dual-path emission) — Ensure both SSE and SDK paths receive streaming chunks.
+5. **10.4** (Configuration) — Factor out hardcoded values and expose readiness.
+6. **10.5** (Tests) — Written incrementally alongside each sub-task.
 
 ### Key Design Decisions
 
 | Decision | Rationale |
 | --- | --- |
-| Bridge module instead of importing core engine directly | The core engine runs in a different runtime (Lambda/serverless with GraphQL context). A thin adapter in the daemon avoids coupling to its internal `ResolveInfo` / `Config` singletons. Both non-streaming and streaming paths share the same resolution and loading logic. |
-| Non-streaming is a first-class path, not just a stepping stone | Many A2A clients will use `SendMessage` (non-streaming). This path must be fully production-grade with persistence, error handling, and response mapping — same quality as the core engine's own `execute_ask_model`. |
-| Intercept `stream_queue` directly rather than rely on `send_data_to_stream` | `send_data_to_stream` requires an API Gateway `connection_id` for WebSocket push. In the daemon context there is no API Gateway; the bridge reads the queue directly in-process. |
-| `threading.Queue` to `asyncio` adapter via `run_in_executor` | The core engine's `ask_model` runs in a `threading.Thread` with `Queue`. The A2A executor is `async`. `run_in_executor` bridges without blocking the event loop. |
+| Gateway-mediated instead of in-process import | Coupling A2A to core-engine internals is brittle. Reusing the public gateway contracts (GraphQL + WebSocket) keeps the boundary identical to what external clients use and lets the core engine evolve independently. |
+| GraphQL for non-streaming | `SendMessage` (non-streaming) is a synchronous request/response. GraphQL mutations are the natural fit — single round-trip, structured response, no connection overhead. The gateway already exposes `/{ep}/ai_agent_core_graphql` for this purpose. |
+| WebSocket for streaming | `SendStreamingMessage` needs chunk-by-chunk delivery. The gateway's `ai_agent_core_ws` route already provides this via `send_data_to_stream` / `chunk_delta` frames. |
+| Client-facing streaming stays on SSE | `message/stream` + `/a2a_sse` already deliver live tokens to A2A clients. The outbound GraphQL/WebSocket is strictly the A2A→core-engine leg; the transports do not overlap. |
+| Same bridge contract as `HermesAgentHandler` | The executor, `stream_queue` drain loop, dual-path emission, and persistence are already generic over the handler. A new handler is the only new surface; selection is pure per-agent metadata. |
+| Non-streaming is a first-class path | Many A2A clients will use `SendMessage` (non-streaming). This path must be fully production-grade with persistence, error handling, and response mapping. |
+| `threading.Queue` to `asyncio` adapter via `run_in_executor` | The WS drain runs in a `threading.Thread` with `Queue`. The A2A executor is `async`. `run_in_executor` bridges without blocking the event loop. |
 | Dual emission (SDK `EventQueue` + `SSEEventQueue`) | The SDK `EventQueue` serves `SendStreamingMessage` responses. The `SSEEventQueue` serves long-lived `SubscribeToTask` subscribers who reconnected with `Last-Event-ID`. Both need the same data. |
-| Persist thread/run/message records in both paths | The core engine creates thread, run, and message records in DynamoDB. The daemon must do the same so conversation history is queryable via the `/rest/{endpoint_id}/a2a_core_graphql` endpoint regardless of whether the client used streaming. |
+| Persist thread/run/message records in both paths | Conversation history must be queryable via the gateway GraphQL endpoint regardless of whether the client used streaming or non-streaming. |
 
 ## SSE Infrastructure Status
 
@@ -515,4 +585,4 @@ blockers.
 | 7 | Streaming and multi-turn (SSE, INPUT_REQUIRED, AUTH_REQUIRED, push config) | Complete | `a2a_sse.py`, `a2a_pushconfig.py`, `a2a_executor.py` |
 | 8 | Production hardening (extended cards, telemetry, TCK, security) | Complete | `a2a_extended_card.py`, `a2a_telemetry.py`, `a2a_tck_checker.py` |
 | 9 | Advanced extensions (gRPC, subscriptions, health, rate limit, cancellation, passport, cost) | Complete | `a2a_grpc.py`, `a2a_graphql_subscriptions.py`, `a2a_health_monitor.py`, `a2a_rate_limiter.py`, `a2a_cancellation.py`, `a2a_secure_passport.py`, `a2a_cost_extension.py` |
-| 10 | ai_agent_core_engine integration (bridge utility, non-streaming + streaming LLM, dual-path emission) | Complete | `a2a_ai_agent_utility.py`, `a2a_executor.py`, `config.py`, `AGENTS.md`, `tests/test_phase10.py` |
+| 10 | Gateway-mediated ai_agent_core_engine integration (GraphQL non-streaming + WebSocket streaming, dual-path emission, SSE client-facing) | Planned | `a2a_core_engine_handler.py` (new), `a2a_ai_agent_utility.py`, `a2a_executor.py`, `config.py`, `AGENTS.md`, `tests/test_phase10.py` |

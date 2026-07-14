@@ -134,6 +134,26 @@ class A2ADaemonEngine(Graphql):
                     request_handler.on_message_send(send_request, context)
                 )
                 result = jsonrpc_response_from_sdk(response, params.get("id"))
+            elif method in ("message/stream", "message/sendStream"):
+                # SDK streaming: drives the executor's streaming path, which
+                # broadcasts live tokens to the gateway SSE manager
+                # (partition-scoped) via the a2a_ai_agent_utility bridge.
+                # The collected SDK events are returned over the POST response.
+                stream_request = build_jsonrpc_sdk_request(SendMessageRequest, params)
+                events = self._run_async(
+                    self._collect_message_stream(
+                        request_handler, stream_request, context
+                    )
+                )
+                result = {
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "status": "streaming_complete",
+                        "events_emitted": len(events),
+                        "events": events,
+                    },
+                    "id": params.get("id"),
+                }
             elif method == "tasks/get":
                 get_request = build_jsonrpc_sdk_request(GetTaskRequest, params)
                 response = self._run_async(
@@ -175,6 +195,71 @@ class A2ADaemonEngine(Graphql):
                     "id": params.get("id"),
                 }
             )
+
+    def sse_message(self, **params: Dict[str, Any]) -> Any:
+        """Process an A2A JSON-RPC message and push activity to SSE clients.
+
+        Gateway `POST /{endpoint_id}/sse` entry point. Handles the message via
+        the standard A2A JSON-RPC surface, then pushes the response to the
+        caller's SSE clients (partition-scoped). Live streaming tokens are
+        broadcast separately from the executor's streaming path.
+        """
+        import pendulum
+
+        from .handlers.sse_manager import sse_manager
+
+        self._apply_partition_defaults(params)
+        username = params.get("context", {}).get("user", {}).get("username", "")
+        partition_key = params.get("partition_key", "")
+
+        raw = self.a2a(**params)
+        try:
+            response = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError):
+            response = raw
+
+        if username:
+            try:
+                Invoker.sync_call_async_compatible(
+                    sse_manager.send_to_user(
+                        username,
+                        {
+                            "type": "a2a_activity",
+                            "method": params.get("method", ""),
+                            "request": params.get("params", {}),
+                            "response": response,
+                            "timestamp": pendulum.now("UTC").isoformat(),
+                        },
+                        partition_key=partition_key,
+                    )
+                )
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to deliver A2A SSE message to user {username}: {e}"
+                )
+
+        return response
+
+    async def _collect_message_stream(
+        self, request_handler: Any, request: Any, context: Any
+    ) -> List[Dict[str, Any]]:
+        """Drain the SDK streaming handler, returning each event as a dict.
+
+        Iterating the generator drives ``AgentExecutor.execute()`` to
+        completion; when the request carries streaming metadata the executor
+        broadcasts live tokens to the gateway SSE manager per chunk. Here we
+        collect the SDK-level events (task/status/artifact updates) so the POST
+        caller receives the full ordered stream in one response.
+        """
+        from .handlers.a2a_jsonrpc_bridge import sdk_response_to_dict
+
+        events: List[Dict[str, Any]] = []
+        async for event in request_handler.on_message_send_stream(request, context):
+            try:
+                events.append(sdk_response_to_dict(event))
+            except Exception as e:  # pragma: no cover - defensive
+                self.logger.warning(f"Failed to serialize stream event: {e}")
+        return events
 
     def _run_async(self, coro):
         """Run an async coroutine from a sync context."""
@@ -240,3 +325,8 @@ def dispatch_graphql(**params: Dict[str, Any]) -> Any:
 def dispatch_a2a(**params: Dict[str, Any]) -> Any:
     """Gateway dispatch entry point for A2A JSON-RPC messages."""
     return _engine().a2a(**params)
+
+
+def dispatch_sse_message(**params: Dict[str, Any]) -> Any:
+    """Gateway dispatch entry point for A2A SSE messages (POST /sse)."""
+    return _engine().sse_message(**params)

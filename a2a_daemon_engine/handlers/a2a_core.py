@@ -83,5 +83,14 @@ class A2ACore(Graphql):
             types=type_class(),
         )
 
+        # Ensure partition_key is available in the GraphQL context dict
+        # so PG repos can access it via info.context.get("partition_key").
+        partition_key = params.get("partition_key")
+        if partition_key:
+            if params.get("context") is None:
+                params["context"] = {}
+            if isinstance(params["context"], dict):
+                params["context"]["partition_key"] = partition_key
+
         # Execute GraphQL query/mutation
         return self.execute(schema, **params)

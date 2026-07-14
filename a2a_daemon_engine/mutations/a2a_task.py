@@ -7,7 +7,7 @@ from typing import Any
 from graphene import Boolean, Field, Mutation, String
 from silvaengine_utility.graphql import JSON
 
-from ..models.dynamodb.a2a_task import delete_a2a_task, insert_update_a2a_task
+from ..models.repositories.dispatch import get_repo
 from ..types.a2a_task import A2ATaskType
 
 
@@ -31,7 +31,8 @@ class InsertUpdateA2aTask(Mutation):
         root: Any, info: Any, **kwargs: dict[str, Any]
     ) -> "InsertUpdateA2aTask":
         try:
-            a2a_task = insert_update_a2a_task(info, **kwargs)
+            repo = get_repo("a2a_task")
+            a2a_task = repo.insert_update(info, **kwargs)
         except Exception as e:
             log = traceback.format_exc()
             info.context.get("logger").error(log)
@@ -49,7 +50,8 @@ class DeleteA2aTask(Mutation):
     @staticmethod
     def mutate(root: Any, info: Any, **kwargs: dict[str, Any]) -> "DeleteA2aTask":
         try:
-            ok = delete_a2a_task(info, **kwargs)
+            repo = get_repo("a2a_task")
+            ok = repo.delete(info, **kwargs)
         except Exception as e:
             log = traceback.format_exc()
             info.context.get("logger").error(log)

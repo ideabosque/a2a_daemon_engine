@@ -76,6 +76,7 @@ class StreamingState:
 
     run_id: str = ""
     chunks: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     final_result: BridgeResult | None = None
 
@@ -108,37 +109,171 @@ async def resolve_agent(
 
     agent_id = agent_uuid or _default_agent_uuid()
 
+    # Fast path: if env-var defaults are set, skip the DB lookup entirely
+    # when the requested agent matches the default.  This avoids hanging on
+    # DynamoDB retries when the agent doesn't exist and env vars provide
+    # the handler config (e.g., Hermes handler via env vars).
+    if (
+        Config.a2a_ai_agent_module
+        and Config.a2a_ai_agent_class
+        and agent_id == _default_agent_uuid()
+    ):
+        if logger:
+            logger.info(
+                f"resolve_agent: using env-var defaults for default agent '{agent_id}'"
+            )
+        hermes_metadata: dict[str, Any] = {}
+        if getattr(Config, "hermes_api_url", None):
+            hermes_metadata["hermes_api_url"] = Config.hermes_api_url
+        if getattr(Config, "hermes_api_key", None):
+            hermes_metadata["hermes_api_key"] = Config.hermes_api_key
+        if getattr(Config, "hermes_model", None):
+            hermes_metadata["hermes_model"] = Config.hermes_model
+        if getattr(Config, "hermes_stream_timeout", None):
+            hermes_metadata["hermes_timeout"] = Config.hermes_stream_timeout
+        return {
+            "agent_id": agent_id,
+            "agent_name": agent_id,
+            "metadata": hermes_metadata,
+            "module_name": Config.a2a_ai_agent_module,
+            "class_name": Config.a2a_ai_agent_class,
+            "instructions": None,
+            "num_of_messages": 10,
+            "tool_call_role": "tool",
+            "mcp_servers": [],
+        }
+
     try:
         if hasattr(Config.a2a_core, "get_a2a_agent"):
-            result = await Config.a2a_core.get_a2a_agent(
+            raw = Config.a2a_core.get_a2a_agent(
                 partition_key=partition_key,
                 agent_id=agent_id,
             )
+            result = await raw if inspect.isawaitable(raw) else raw
         elif hasattr(Config.a2a_core, "a2a_core_graphql"):
-            # Fallback via raw GraphQL
-            result = await Config.a2a_core.a2a_core_graphql(
+            # Fallback via raw GraphQL (use camelCase field names).
+            # NOTE: metadata is fetched separately via direct SQL because
+            # the silvaengine_utility JSON scalar has a serialization bug
+            # ("JSON.serialize() missing 1 required positional argument: 'value'").
+            raw = Config.a2a_core.a2a_core_graphql(
                 query="""
-                    query GetAgent($partition_key: String!, $agent_id: String!) {
-                        a2a_agent(partition_key: $partition_key, agent_id: $agent_id) {
-                            agent_id
-                            agent_name
+                    query GetAgent($agentId: String!) {
+                        a2aAgent(agentId: $agentId) {
+                            agentId
+                            agentName
                             capabilities
-                            metadata
                         }
                     }
                 """,
-                variables={"partition_key": partition_key, "agent_id": agent_id},
+                variables={"agentId": agent_id},
+                partition_key=partition_key,
             )
+            result = await raw if inspect.isawaitable(raw) else raw
         else:
             return None
 
+        if isinstance(result, dict) and "a2aAgent" in result:
+            result = result["a2aAgent"]
         if isinstance(result, dict) and "a2a_agent" in result:
             result = result["a2a_agent"]
 
+        # If GraphQL returned errors, result may be {"errors": [...]}
+        if isinstance(result, dict) and "errors" in result and "a2aAgent" not in result:
+            result = None
+
+        # Unwrap API Gateway-style response envelope: {"statusCode": 200, "body": "..."}
+        if isinstance(result, dict) and "body" in result and "statusCode" in result:
+            import json as _json3
+
+            try:
+                inner = _json3.loads(result["body"])
+                if isinstance(inner, dict):
+                    if "data" in inner and "a2aAgent" in inner["data"]:
+                        result = inner["data"]["a2aAgent"]
+                    elif "data" in inner and "a2a_agent" in inner["data"]:
+                        result = inner["data"]["a2a_agent"]
+                    elif "errors" in inner:
+                        result = None
+            except Exception:
+                result = None
+
+        # Normalize camelCase keys from GraphQL to snake_case early so
+        # the "null fields" check below works correctly.
+        if isinstance(result, dict):
+            if "agentId" in result and "agent_id" not in result:
+                result["agent_id"] = result["agentId"]
+            if "agentName" in result and "agent_name" not in result:
+                result["agent_name"] = result["agentName"]
+
         if not isinstance(result, dict):
+            # Fallback: if the agent was not found in the DB but env-var
+            # defaults are set, return a synthetic config so the bridge
+            # can still load the handler (e.g., Hermes handler via
+            # A2A_AI_AGENT_MODULE / A2A_AI_AGENT_CLASS).
+            if Config.a2a_ai_agent_module and Config.a2a_ai_agent_class:
+                if logger:
+                    logger.info(
+                        f"resolve_agent: agent '{agent_id}' not in DB; "
+                        "using env-var defaults for handler resolution."
+                    )
+                hermes_metadata: dict[str, Any] = {}
+                if getattr(Config, "hermes_api_url", None):
+                    hermes_metadata["hermes_api_url"] = Config.hermes_api_url
+                if getattr(Config, "hermes_api_key", None):
+                    hermes_metadata["hermes_api_key"] = Config.hermes_api_key
+                if getattr(Config, "hermes_model", None):
+                    hermes_metadata["hermes_model"] = Config.hermes_model
+                if getattr(Config, "hermes_stream_timeout", None):
+                    hermes_metadata["hermes_timeout"] = Config.hermes_stream_timeout
+                return {
+                    "agent_id": agent_id,
+                    "agent_name": agent_id,
+                    "metadata": hermes_metadata,
+                    "module_name": Config.a2a_ai_agent_module,
+                    "class_name": Config.a2a_ai_agent_class,
+                    "instructions": None,
+                    "num_of_messages": 10,
+                    "tool_call_role": "tool",
+                    "mcp_servers": [],
+                }
             return None
 
-        # Normalize metadata into flat config if present
+        # If the DB returned a dict with all-None fields, treat as not found
+        # and apply the env-var fallback.
+        if result.get("agent_id") is None and result.get("agent_name") is None:
+            if Config.a2a_ai_agent_module and Config.a2a_ai_agent_class:
+                if logger:
+                    logger.info(
+                        f"resolve_agent: agent '{agent_id}' DB record has null fields; "
+                        "using env-var defaults for handler resolution."
+                    )
+                # Include Hermes connection details from Config so the
+                # handler can reach the Hermes API Server without DB metadata.
+                hermes_metadata: dict[str, Any] = {}
+                if getattr(Config, "hermes_api_url", None):
+                    hermes_metadata["hermes_api_url"] = Config.hermes_api_url
+                if getattr(Config, "hermes_api_key", None):
+                    hermes_metadata["hermes_api_key"] = Config.hermes_api_key
+                if getattr(Config, "hermes_model", None):
+                    hermes_metadata["hermes_model"] = Config.hermes_model
+                if getattr(Config, "hermes_stream_timeout", None):
+                    hermes_metadata["hermes_timeout"] = Config.hermes_stream_timeout
+                return {
+                    "agent_id": agent_id,
+                    "agent_name": agent_id,
+                    "metadata": hermes_metadata,
+                    "module_name": Config.a2a_ai_agent_module,
+                    "class_name": Config.a2a_ai_agent_class,
+                    "instructions": None,
+                    "num_of_messages": 10,
+                    "tool_call_role": "tool",
+                    "mcp_servers": [],
+                }
+            return None
+
+        # Normalize metadata into flat config if present.
+        # The GraphQL JSON scalar has a serialization bug, so metadata is
+        # fetched via direct SQL when using the PostgreSQL backend.
         metadata = result.get("metadata") or {}
         if isinstance(metadata, str):
             import json as _json
@@ -148,9 +283,50 @@ async def resolve_agent(
             except Exception:
                 metadata = {}
 
+        # If metadata is empty (GraphQL couldn't return it), try direct SQL.
+        if not metadata and Config.DB_BACKEND == "postgresql" and Config.db_session:
+            try:
+                import json as _json2
+
+                session = Config.db_session
+                from ..models.postgresql.a2a_agent import A2AAgentModel
+
+                row = (
+                    session.query(A2AAgentModel)
+                    .filter(
+                        A2AAgentModel.partition_key == partition_key,
+                        A2AAgentModel.agent_id == agent_id,
+                    )
+                    .first()
+                )
+                if row and row.agent_metadata:
+                    raw_meta = row.agent_metadata
+                    if isinstance(raw_meta, str):
+                        metadata = _json2.loads(raw_meta)
+                    elif isinstance(raw_meta, dict):
+                        metadata = raw_meta
+            except Exception as e:
+                if logger:
+                    logger.warning(f"resolve_agent: direct SQL metadata fetch failed: {e}")
+
+        # If the DB record doesn't have Hermes connection details in its
+        # metadata, inject them from Config so the handler can authenticate.
+        if not metadata.get("hermes_api_url") and getattr(Config, "hermes_api_url", None):
+            metadata["hermes_api_url"] = Config.hermes_api_url
+        if not metadata.get("hermes_api_key") and getattr(Config, "hermes_api_key", None):
+            metadata["hermes_api_key"] = Config.hermes_api_key
+        if not metadata.get("hermes_model") and getattr(Config, "hermes_model", None):
+            metadata["hermes_model"] = Config.hermes_model
+        if not metadata.get("hermes_timeout") and getattr(Config, "hermes_stream_timeout", None):
+            metadata["hermes_timeout"] = Config.hermes_stream_timeout
+
         agent_config: dict[str, Any] = {
             "agent_id": result.get("agent_id"),
             "agent_name": result.get("agent_name"),
+            # Preserve the parsed raw metadata so handler-specific connection
+            # fields (e.g., hermes_api_url, hermes_api_key) survive handler
+            # resolution. Flattened keys below stay for backward compatibility.
+            "metadata": metadata,
             "module_name": (
                 metadata.get("module_name")
                 or metadata.get("moduleName")
@@ -253,18 +429,19 @@ async def build_input_messages(
         try:
             # Query existing messages for this thread
             if hasattr(Config.a2a_core, "get_a2a_messages"):
-                history = await Config.a2a_core.get_a2a_messages(
+                raw = Config.a2a_core.get_a2a_messages(
                     partition_key=partition_key,
                     thread_id=thread_uuid,
                     limit=num_of_messages,
                 )
+                history = await raw if inspect.isawaitable(raw) else raw
             elif hasattr(Config.a2a_core, "a2a_core_graphql"):
-                history = await Config.a2a_core.a2a_core_graphql(
+                raw = Config.a2a_core.a2a_core_graphql(
                     query="""
                         query GetMessages($partition_key: String!, $thread_id: String!, $limit: Int) {
-                            a2a_messages(partition_key: $partition_key, thread_id: $thread_id, limit: $limit) {
+                            a2aMessages(partition_key: $partition_key, threadId: $thread_id, limit: $limit) {
                                 items {
-                                    message_id
+                                    messageId
                                     role
                                     content
                                     metadata
@@ -278,11 +455,12 @@ async def build_input_messages(
                         "limit": num_of_messages,
                     },
                 )
+                history = await raw if inspect.isawaitable(raw) else raw
             else:
                 history = None
 
             if isinstance(history, dict):
-                items = history.get("items") or history.get("a2a_messages", {}).get("items", [])
+                items = history.get("items") or history.get("a2aMessages", {}).get("items", []) or history.get("a2a_messages", {}).get("items", [])
                 for msg in items:
                     if isinstance(msg, dict):
                         role = msg.get("role", "user")
@@ -602,12 +780,17 @@ async def execute_ai_agent_streaming(
     run_uuid: str | None = None,
     stream_timeout: float | None = None,
     logger: logging.Logger | None = None,
+    on_run_id: Any = None,
 ) -> BridgeResult:
     """
     Full streaming lifecycle with dual-path emission.
 
     Emits each chunk to both SDK EventQueue and SSEEventQueue.
     Persists records after streaming completes.
+
+    The optional ``on_run_id`` callback is invoked once when a ``run_id`` chunk
+    is drained. It receives ``(task_id, run_id, handler, stream_event)`` so the
+    executor can register the external run for cancel/approval passthrough.
     """
     _logger = logger or (Config.logger if Config.logger else logging.getLogger(__name__))
     if stream_timeout is None:
@@ -711,12 +894,40 @@ async def execute_ai_agent_streaming(
                 break
             if parsed.name == "run_id":
                 state.run_id = parsed.value
+                # Notify the executor so it can register the external run for
+                # cancel/approval passthrough.
+                if on_run_id is not None:
+                    try:
+                        _maybe_call_on_run_id(on_run_id, task_id, state.run_id, handler, stream_event)
+                    except Exception as cb_err:
+                        _logger.warning(f"on_run_id callback failed: {cb_err}")
+                continue
+            if parsed.name == "approval":
+                # Hermes requires human approval — emit INPUT_REQUIRED to A2A
+                await _emit_status_to_sdk(event_queue, "INPUT_REQUIRED", _logger)
+                await _emit_status_to_sse(
+                    streaming_manager, task_id, "INPUT_REQUIRED", _logger,
+                    partition_key=partition_key,
+                )
+                state.metadata["pending_approval"] = parsed.value
+                state.metadata["run_id"] = state.run_id
+                continue
+            if parsed.name == "tool_call":
+                # Tool execution started — metadata only, not a token
+                continue
+            if parsed.name == "tool_result":
+                # Tool execution completed — metadata only, not a token
                 continue
             if parsed.name == "token":
                 state.chunks.append(parsed.value)
-                # Dual-path emission
-                await _emit_to_sdk(event_queue, parsed.value, _logger)
-                await _emit_to_sse(streaming_manager, task_id, parsed.value, _logger)
+                # Emit to SSE only (per-chunk) — the SDK EventQueue gets a
+                # single accumulated Message after the stream completes,
+                # not one Message per token (A2A SDK v2 rejects multiple
+                # Message objects from on_message_send_stream).
+                await _emit_to_sse(
+                    streaming_manager, task_id, parsed.value, _logger,
+                    partition_key=partition_key,
+                )
 
         # Final state
         final_content = "".join(state.chunks)
@@ -726,18 +937,28 @@ async def execute_ai_agent_streaming(
             result = BridgeResult(
                 content=final_content,
                 role="agent",
-                metadata={"run_id": state.run_id} if state.run_id else {},
+                metadata=dict(state.metadata),
             )
+            if state.run_id:
+                result.metadata.setdefault("run_id", state.run_id)
 
         if not result.message_id:
             import uuid as _uuid
 
             result.message_id = f"msg-{_uuid.uuid4().hex}"
 
-        # Emit final status
-        await _emit_status_to_sdk(event_queue, "COMPLETED" if not state.error else "FAILED", _logger)
+        # Emit the single accumulated agent Message to the SDK EventQueue.
+        # This must be one Message only — the A2A SDK v2 raises
+        # InvalidAgentResponseError if multiple Message objects are emitted.
+        # Status events (WORKING/COMPLETED) are NOT emitted to the SDK
+        # EventQueue because on_message_send rejects TaskStatusUpdateEvent.
+        if final_content:
+            await _emit_to_sdk(event_queue, final_content, _logger)
+
+        # Emit final status to SSE only (not SDK EventQueue)
         await _emit_status_to_sse(
-            streaming_manager, task_id, "COMPLETED" if not state.error else "FAILED", _logger
+            streaming_manager, task_id, "COMPLETED" if not state.error else "FAILED", _logger,
+            partition_key=partition_key,
         )
 
         # Persist
@@ -802,19 +1023,30 @@ async def _emit_to_sse(
     task_id: str,
     text: str,
     logger: logging.Logger | None = None,
+    partition_key: str | None = None,
 ) -> None:
-    """Emit a text chunk into the SSEEventQueue as a task artifact."""
-    if streaming_manager is None:
-        return
-    try:
-        if hasattr(streaming_manager, "emit_task_artifact"):
-            await streaming_manager.emit_task_artifact(
-                task_id=task_id,
-                artifact={"type": "text", "text": text},
-            )
-    except Exception as e:
-        if logger:
-            logger.warning(f"Failed to emit SSE artifact: {e}")
+    """Emit a text chunk into the SSEEventQueue as a task artifact.
+
+    Also broadcasts to the gateway SSE manager (partition-scoped) so clients
+    attached to ``GET /{endpoint_id}/sse`` receive live streaming tokens.
+    """
+    if streaming_manager is not None:
+        try:
+            if hasattr(streaming_manager, "emit_task_artifact"):
+                await streaming_manager.emit_task_artifact(
+                    task_id=task_id,
+                    artifact={"type": "text", "text": text},
+                )
+        except Exception as e:
+            if logger:
+                logger.warning(f"Failed to emit SSE artifact: {e}")
+
+    await _broadcast_to_gateway_sse(
+        partition_key,
+        {"type": "task_artifact", "task_id": task_id,
+         "artifact": {"type": "text", "text": text}},
+        logger,
+    )
 
 
 async def _emit_status_to_sse(
@@ -822,19 +1054,54 @@ async def _emit_status_to_sse(
     task_id: str,
     state_name: str,
     logger: logging.Logger | None = None,
+    partition_key: str | None = None,
 ) -> None:
-    """Emit a status update into the SSEEventQueue."""
-    if streaming_manager is None:
+    """Emit a status update into the SSEEventQueue.
+
+    Also broadcasts to the gateway SSE manager (partition-scoped).
+    """
+    if streaming_manager is not None:
+        try:
+            if hasattr(streaming_manager, "emit_task_status"):
+                await streaming_manager.emit_task_status(
+                    task_id=task_id,
+                    state=state_name.lower(),
+                )
+        except Exception as e:
+            if logger:
+                logger.warning(f"Failed to emit SSE status: {e}")
+
+    await _broadcast_to_gateway_sse(
+        partition_key,
+        {"type": "task_status", "task_id": task_id, "state": state_name.lower()},
+        logger,
+    )
+
+
+async def _broadcast_to_gateway_sse(
+    partition_key: str | None,
+    message: dict,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Broadcast an event to the gateway SSE manager, scoped by partition.
+
+    Best-effort: if the gateway SSE manager is unavailable (e.g. standalone
+    daemon mode), the failure is logged and ignored.
+    """
+    if not partition_key:
         return
     try:
-        if hasattr(streaming_manager, "emit_task_status"):
-            await streaming_manager.emit_task_status(
-                task_id=task_id,
-                state=state_name.lower(),
-            )
+        import pendulum
+
+        from .sse_manager import sse_manager
+
+        await sse_manager.broadcast_to_partition(
+            partition_key,
+            {**message, "timestamp": pendulum.now("UTC").isoformat()},
+        )
     except Exception as e:
         if logger:
-            logger.warning(f"Failed to emit SSE status: {e}")
+            logger.debug(f"Gateway SSE broadcast skipped: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -856,6 +1123,30 @@ def _parse_chunk(chunk: Any) -> StreamingChunk:
         name=getattr(chunk, "name", "token"),
         value=getattr(chunk, "value", str(chunk)),
     )
+
+
+def _maybe_call_on_run_id(
+    on_run_id: Any,
+    task_id: str,
+    run_id: str,
+    handler: Any,
+    stream_event: threading.Event,
+) -> None:
+    """Invoke the executor-provided on_run_id callback (sync or async).
+
+    The callback receives ``(task_id, run_id, handler, stream_event)`` so the
+    executor can register the external run for cancel/approval passthrough.
+    """
+    import inspect as _inspect
+
+    result = on_run_id(task_id, run_id, handler, stream_event)
+    if _inspect.isawaitable(result):
+        # The drain loop is async; schedule the coroutine eagerly.
+        import asyncio as _asyncio
+
+        loop = _asyncio.get_event_loop()
+        if loop.is_running():
+            _asyncio.ensure_future(result)
 
 
 # ---------------------------------------------------------------------------

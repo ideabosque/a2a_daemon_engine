@@ -7,18 +7,20 @@ from graphene import ResolveInfo
 from silvaengine_utility import method_cache
 
 from ..handlers.config import Config
-from ..models.dynamodb import a2a_message
+from ..models.repositories.dispatch import get_repo
 from ..types.a2a_message import A2AMessageListType, A2AMessageType
 
 
 def resolve_a2a_message(
     info: ResolveInfo, **kwargs: dict[str, Any]
 ) -> A2AMessageType:
-    return a2a_message.resolve_a2a_message(info, **kwargs)
+    repo = get_repo("a2a_message")
+    return repo.resolve_single(info, **kwargs)
 
 
 @method_cache(ttl=Config.get_cache_ttl(), cache_name=Config.get_cache_name('queries', 'a2a_message'))
 def resolve_a2a_message_list(
     info: ResolveInfo, **kwargs: dict[str, Any]
 ) -> A2AMessageListType:
-    return a2a_message.resolve_a2a_message_list(info, **kwargs)
+    repo = get_repo("a2a_message")
+    return repo.list(info, **kwargs)

@@ -175,6 +175,12 @@ class Config:
     a2a_streaming_enabled: bool = True
     phase10_available: bool = False
 
+    # Phase 10: Hermes Agent API bridge settings
+    hermes_api_url: str | None = None
+    hermes_api_key: str | None = None
+    hermes_model: str = "hermes-agent"
+    hermes_stream_timeout: float = 300.0
+
     @classmethod
     def initialize(cls, logger: logging.Logger, **setting: Dict[str, Any]) -> None:
         try:
@@ -229,6 +235,20 @@ class Config:
         cls.a2a_stream_timeout = float(setting.get("A2A_STREAM_TIMEOUT", setting.get("a2a_stream_timeout", 120.0)))
         cls.a2a_streaming_enabled = _truthy(
             setting.get("A2A_STREAMING_ENABLED", setting.get("a2a_streaming_enabled", True))
+        )
+
+        # Hermes Agent API bridge settings
+        cls.hermes_api_url = (
+            setting.get("HERMES_API_URL") or setting.get("hermes_api_url")
+        )
+        cls.hermes_api_key = (
+            setting.get("HERMES_API_KEY") or setting.get("hermes_api_key")
+        )
+        cls.hermes_model = (
+            setting.get("HERMES_MODEL") or setting.get("hermes_model") or "hermes-agent"
+        )
+        cls.hermes_stream_timeout = float(
+            setting.get("HERMES_STREAM_TIMEOUT", setting.get("hermes_stream_timeout", 300.0))
         )
 
     @classmethod

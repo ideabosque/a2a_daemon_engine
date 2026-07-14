@@ -2,8 +2,9 @@
 
 > **Project:** Hermes Agent ↔ A2A Daemon Engine Integration
 > **Location:** Plugin within `a2a_daemon_engine` (SilvaEngine monorepo)
-> **Date:** 2026-07-11
+> **Date:** 2026-07-11 (initial), 2026-07-14 (updated with implementation findings)
 > **Author:** bibow
+> **Status:** Implemented — all phases complete, E2E verified
 
 ---
 
@@ -1376,6 +1377,85 @@ Hermes Agent side:
 | `API_SERVER_ENABLED` | Set to `true` to enable the API server |
 | `API_SERVER_KEY` | Bearer token for API auth |
 | `API_SERVER_CORS_ORIGINS` | Comma-separated allowed origins (optional) |
+
+---
+
+## 13. Implementation Findings & Updates (2026-07-14)
+
+### 13.1 What Changed from the Original Plan
+
+The original plan was written as a design document. The actual implementation
+revealed several constraints that required adjustments:
+
+#### 13.1.1 A2A SDK v2 Constraints (Not in Original Plan)
+
+The A2A SDK v2 (`a2a-sdk==1.0.2`) imposes two constraints not anticipated in
+the original plan:
+
+1. **`on_message_send` rejects multiple Message objects** — the streaming
+   drain loop originally emitted one `Message` per token chunk. Fixed by
+   accumulating all tokens and emitting a single `Message` after the stream
+   completes.
+
+2. **`on_message_send` rejects `TaskStatusUpdateEvent`** — the executor
+   originally emitted WORKING/COMPLETED/FAILED status events. Fixed by
+   removing status event emissions from `_handle_task_execution` for
+   `message/send` (status events go to SSE only).
+
+#### 13.1.2 Real Hermes SSE Event Format
+
+The original plan used `{"type": "response.output_text.delta"}` event types.
+The real Hermes API Server uses `{"event": "message.delta"}` format. The
+handler now accepts both `"event"` and `"type"` keys and maps both formats.
+
+#### 13.1.3 PostgreSQL Backend (Not DynamoDB)
+
+The original plan didn't address the database backend. The implementation
+uses PostgreSQL exclusively:
+- All mutations/queries use the dispatch layer (`get_repo()`) instead of
+  direct DynamoDB imports
+- `resolve_agent()` queries GraphQL without `metadata` (JSON scalar bug),
+  then falls back to direct SQL via SQLAlchemy to fetch the agent's
+  `metadata` column
+- Agent registration uses direct SQL via `register_hermes_agent.py`
+  (GraphQL JSON variable passing is broken)
+
+#### 13.1.4 Gateway Integration (Not Standalone Daemon)
+
+The A2A daemon runs **in-process inside the SilvaEngine Gateway**, not as
+a standalone process. All E2E tests go through `POST /{endpoint_id}/a2a` on
+the gateway (port 8765). The gateway's `build_setting_from_env()` was
+extended to pass `HERMES_*` env vars to the a2a_daemon Config.
+
+#### 13.1.5 `resolve_agent()` Response Envelope
+
+The `a2a_core_graphql()` method returns a wrapped response:
+`{"statusCode": 200, "body": "...json string..."}`. The `resolve_agent()`
+function was updated to:
+1. Unwrap the API Gateway-style envelope
+2. Parse the inner JSON body
+3. Normalize camelCase keys (`agentId` → `agent_id`) to snake_case
+4. Check for null fields and fall back to env-var config
+
+### 13.2 Test Scripts
+
+All Hermes integration test scripts are in:
+`silvaengine_gateway/silvaengine_gateway/tests/`
+
+| Script | Tests | Purpose |
+|--------|-------|---------|
+| `test_hermes_handler.py` | 24 | Unit tests (mocked HTTP) |
+| `test_hermes_gateway_live.py` | 7 | E2E through gateway |
+| `test_hermes_sse_live.py` | 1 | SSE streaming test |
+| `test_hermes_chatbot.py` | — | Interactive streaming chatbot |
+| `register_hermes_agent.py` | — | Agent registration via direct SQL |
+
+### 13.3 Verification Results
+
+- **Unit tests:** 24/24 pass (`test_hermes_handler.py`)
+- **E2E gateway tests:** 7/7 pass (`test_hermes_gateway_live.py`) — real Hermes responses
+- **SSE streaming:** Real-time token chunks from Hermes through SSE
+- **Chatbot:** Interactive streaming with conversation history
 
 
 
