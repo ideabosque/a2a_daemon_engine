@@ -210,5 +210,8 @@ __marimo__/
 test_data.json
 .claude
 .zed
+.agents
+.codex
 pytest-cache-*/
 AGENTS.md
+test_results/

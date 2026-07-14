@@ -5,9 +5,9 @@ import traceback
 from typing import Any
 
 from graphene import Boolean, Field, List, Mutation, String
-from silvaengine_utility import JSON
+from silvaengine_utility.graphql import JSON
 
-from ..models.a2a_agent import delete_a2a_agent, insert_update_a2a_agent
+from ..models.repositories.dispatch import get_repo
 from ..types.a2a_agent import A2AAgentType
 
 
@@ -30,7 +30,8 @@ class InsertUpdateA2aAgent(Mutation):
         root: Any, info: Any, **kwargs: dict[str, Any]
     ) -> "InsertUpdateA2aAgent":
         try:
-            a2a_agent = insert_update_a2a_agent(info, **kwargs)
+            repo = get_repo("a2a_agent")
+            a2a_agent = repo.insert_update(info, **kwargs)
         except Exception as e:
             log = traceback.format_exc()
             info.context.get("logger").error(log)
@@ -48,7 +49,8 @@ class DeleteA2aAgent(Mutation):
     @staticmethod
     def mutate(root: Any, info: Any, **kwargs: dict[str, Any]) -> "DeleteA2aAgent":
         try:
-            ok = delete_a2a_agent(info, **kwargs)
+            repo = get_repo("a2a_agent")
+            ok = repo.delete(info, **kwargs)
         except Exception as e:
             log = traceback.format_exc()
             info.context.get("logger").error(log)
