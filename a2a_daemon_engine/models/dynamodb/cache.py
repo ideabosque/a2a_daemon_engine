@@ -14,7 +14,7 @@ from silvaengine_dynamodb_base.cache_utils import (
 
 @lru_cache(maxsize=1)
 def _get_cascading_cache_purger() -> CascadingCachePurger:
-    from ..handlers.config import Config
+    from ...handlers.config import Config
 
     return CascadingCachePurger(
         CacheConfigResolvers(
