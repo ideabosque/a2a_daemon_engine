@@ -5,9 +5,9 @@ import traceback
 from typing import Any
 
 from graphene import Boolean, Field, Mutation, String
-from silvaengine_utility import JSON
+from silvaengine_utility.graphql import JSON
 
-from ..models.a2a_setting import delete_a2a_setting, insert_update_a2a_setting
+from ..models.repositories.dispatch import get_repo
 from ..types.a2a_setting import A2ASettingType
 
 
@@ -26,7 +26,8 @@ class InsertUpdateA2aSetting(Mutation):
         root: Any, info: Any, **kwargs: dict[str, Any]
     ) -> "InsertUpdateA2aSetting":
         try:
-            a2a_setting = insert_update_a2a_setting(info, **kwargs)
+            repo = get_repo("a2a_setting")
+            a2a_setting = repo.insert_update(info, **kwargs)
         except Exception as e:
             log = traceback.format_exc()
             info.context.get("logger").error(log)
@@ -44,7 +45,8 @@ class DeleteA2aSetting(Mutation):
     @staticmethod
     def mutate(root: Any, info: Any, **kwargs: dict[str, Any]) -> "DeleteA2aSetting":
         try:
-            ok = delete_a2a_setting(info, **kwargs)
+            repo = get_repo("a2a_setting")
+            ok = repo.delete(info, **kwargs)
         except Exception as e:
             log = traceback.format_exc()
             info.context.get("logger").error(log)

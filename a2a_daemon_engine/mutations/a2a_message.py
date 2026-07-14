@@ -5,9 +5,9 @@ import traceback
 from typing import Any
 
 from graphene import Boolean, Field, Mutation, String
-from silvaengine_utility import JSON
+from silvaengine_utility.graphql import JSON
 
-from ..models.a2a_message import delete_a2a_message, insert_update_a2a_message
+from ..models.repositories.dispatch import get_repo
 from ..types.a2a_message import A2AMessageType
 
 
@@ -29,7 +29,8 @@ class InsertUpdateA2aMessage(Mutation):
         root: Any, info: Any, **kwargs: dict[str, Any]
     ) -> "InsertUpdateA2aMessage":
         try:
-            a2a_message = insert_update_a2a_message(info, **kwargs)
+            repo = get_repo("a2a_message")
+            a2a_message = repo.insert_update(info, **kwargs)
         except Exception as e:
             log = traceback.format_exc()
             info.context.get("logger").error(log)
@@ -47,7 +48,8 @@ class DeleteA2aMessage(Mutation):
     @staticmethod
     def mutate(root: Any, info: Any, **kwargs: dict[str, Any]) -> "DeleteA2aMessage":
         try:
-            ok = delete_a2a_message(info, **kwargs)
+            repo = get_repo("a2a_message")
+            ok = repo.delete(info, **kwargs)
         except Exception as e:
             log = traceback.format_exc()
             info.context.get("logger").error(log)

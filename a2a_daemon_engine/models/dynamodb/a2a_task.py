@@ -25,8 +25,8 @@ from silvaengine_utility import method_cache
 from silvaengine_utility.serializer import Serializer
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from ..handlers.config import Config
-from ..types.a2a_task import A2ATaskListType, A2ATaskType
+from ...handlers.config import Config
+from ...types.a2a_task import A2ATaskListType, A2ATaskType
 
 
 class TaskStatusIndex(LocalSecondaryIndex):
@@ -105,7 +105,7 @@ def purge_cache():
                 result = original_function(*args, **kwargs)
 
                 # Then purge cache after successful operation
-                from ..models.cache import purge_entity_cascading_cache
+                from .cache import purge_entity_cascading_cache
 
                 # Get entity keys from kwargs or entity parameter
                 entity_keys = {}

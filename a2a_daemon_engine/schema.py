@@ -7,18 +7,18 @@ from typing import Any
 
 from graphene import Field, Int, ObjectType, ResolveInfo, String
 
-from ..mutations.a2a_agent import DeleteA2aAgent, InsertUpdateA2aAgent
-from ..mutations.a2a_message import DeleteA2aMessage, InsertUpdateA2aMessage
-from ..mutations.a2a_setting import DeleteA2aSetting, InsertUpdateA2aSetting
-from ..mutations.a2a_task import DeleteA2aTask, InsertUpdateA2aTask
-from ..queries.a2a_agent import resolve_a2a_agent, resolve_a2a_agent_list
-from ..queries.a2a_message import resolve_a2a_message, resolve_a2a_message_list
-from ..queries.a2a_setting import resolve_a2a_setting, resolve_a2a_setting_list
-from ..queries.a2a_task import resolve_a2a_task, resolve_a2a_task_list
-from ..types.a2a_agent import A2AAgentListType, A2AAgentType
-from ..types.a2a_message import A2AMessageListType, A2AMessageType
-from ..types.a2a_setting import A2ASettingListType, A2ASettingType
-from ..types.a2a_task import A2ATaskListType, A2ATaskType
+from .mutations.a2a_agent import DeleteA2aAgent, InsertUpdateA2aAgent
+from .mutations.a2a_message import DeleteA2aMessage, InsertUpdateA2aMessage
+from .mutations.a2a_setting import DeleteA2aSetting, InsertUpdateA2aSetting
+from .mutations.a2a_task import DeleteA2aTask, InsertUpdateA2aTask
+from .queries.a2a_agent import resolve_a2a_agent, resolve_a2a_agent_list
+from .queries.a2a_message import resolve_a2a_message, resolve_a2a_message_list
+from .queries.a2a_setting import resolve_a2a_setting, resolve_a2a_setting_list
+from .queries.a2a_task import resolve_a2a_task, resolve_a2a_task_list
+from .types.a2a_agent import A2AAgentListType, A2AAgentType
+from .types.a2a_message import A2AMessageListType, A2AMessageType
+from .types.a2a_setting import A2ASettingListType, A2ASettingType
+from .types.a2a_task import A2ATaskListType, A2ATaskType
 
 
 def type_class():

@@ -103,6 +103,23 @@ class A2AServerCallContextBuilder(DefaultServerCallContextBuilder):
         if "taskData" in params and "task_data" not in metadata:
             metadata["task_data"] = params["taskData"]
 
+        for source_key, target_key in (
+            ("agentId", "agent_uuid"),
+            ("agent_id", "agent_uuid"),
+            ("threadId", "thread_uuid"),
+            ("thread_id", "thread_uuid"),
+            ("runId", "run_uuid"),
+            ("run_id", "run_uuid"),
+        ):
+            if source_key in params and target_key not in metadata:
+                metadata[target_key] = params[source_key]
+            if source_key in metadata and target_key not in metadata:
+                metadata[target_key] = metadata[source_key]
+
+        method = body.get("method")
+        if isinstance(method, str) and "method" not in metadata:
+            metadata["method"] = method
+
         if isinstance(metadata, dict):
             state.update(metadata)
 

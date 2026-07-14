@@ -74,7 +74,7 @@ class A2ACore(Graphql):
             GraphQL execution result
         """
         # Import schema components
-        from .schema import Mutations, Query, type_class
+        from ..schema import Mutations, Query, type_class
 
         # Create GraphQL schema
         schema = Schema(
@@ -82,6 +82,15 @@ class A2ACore(Graphql):
             mutation=Mutations,
             types=type_class(),
         )
+
+        # Ensure partition_key is available in the GraphQL context dict
+        # so PG repos can access it via info.context.get("partition_key").
+        partition_key = params.get("partition_key")
+        if partition_key:
+            if params.get("context") is None:
+                params["context"] = {}
+            if isinstance(params["context"], dict):
+                params["context"]["partition_key"] = partition_key
 
         # Execute GraphQL query/mutation
         return self.execute(schema, **params)

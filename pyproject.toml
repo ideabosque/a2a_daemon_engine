@@ -5,7 +5,7 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "a2a-daemon-engine"
 version = "0.0.1"
-description = "Agent-to-Agent (A2A) Protocol Daemon Engine"
+description = "Agent-to-Agent (A2A) Protocol Daemon Engine with gateway dispatch"
 readme = "README.md"
 authors = ["SilvaEngine Team"]
 license = "MIT"
@@ -27,13 +27,8 @@ packages = [{include = "a2a_daemon_engine"}]
 [tool.poetry.dependencies]
 python = "^3.10"
 
-# Web Framework
-fastapi = {extras = ["all"], version = "^0.104.0"}
-uvicorn = {extras = ["standard"], version = "^0.24.0"}
-
-# Authentication
+# Authentication (JWT verification — gateway handles token issuance)
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
-python-multipart = "^0.0.6"
 passlib = {extras = ["bcrypt"], version = "^1.7.4"}
 bcrypt = "^4.0.1"
 
@@ -61,7 +56,7 @@ SilvaEngine-Utility = "^0.1.0"
 # Database
 pynamodb = "^5.5.0"
 
-# A2A SDK (upgraded to v1.0.0 for protocol compliance)
+# A2A SDK (Starlette transitive via http-server extra for SDK protocol server)
 a2a-sdk = {extras = ["http-server"], version = "^1.0.0"}
 
 # gRPC (optional)
@@ -71,57 +66,27 @@ grpcio-tools = {version = "^1.59.0", optional = true}
 # Telemetry (optional)
 opentelemetry-api = {version = "^1.20.0", optional = true}
 opentelemetry-sdk = {version = "^1.20.0", optional = true}
-opentelemetry-instrumentation-fastapi = {version = "^0.41b0", optional = true}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"
 pytest-asyncio = "^0.21.0"
 pytest-cov = "^4.1.0"
-black = "^23.9.0"
 ruff = "^0.0.292"
-mypy = "^1.5.0"
 
 [tool.poetry.extras]
 grpc = ["grpcio", "grpcio-tools"]
-telemetry = ["opentelemetry-api", "opentelemetry-sdk", "opentelemetry-instrumentation-fastapi"]
-all = ["grpcio", "grpcio-tools", "opentelemetry-api", "opentelemetry-sdk", "opentelemetry-instrumentation-fastapi"]
-
-[tool.poetry.scripts]
-a2a-daemon = "a2a_daemon_engine.main:main"
+telemetry = ["opentelemetry-api", "opentelemetry-sdk"]
+postgresql = ["SQLAlchemy>=1.4", "psycopg2-binary>=2.9", "alembic>=1.10"]
+all = ["grpcio", "grpcio-tools", "opentelemetry-api", "opentelemetry-sdk", "SQLAlchemy>=1.4", "psycopg2-binary>=2.9", "alembic>=1.10"]
 
 [tool.poetry.urls]
 "Bug Tracker" = "https://github.com/ideabosque/a2a_daemon_engine/issues"
-
-[tool.black]
-line-length = 88
-target-version = ['py310', 'py311', 'py312']
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-)/
-'''
 
 [tool.ruff]
 line-length = 88
 target-version = "py310"
 select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]  # Line too long (handled by black)
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
-ignore_missing_imports = true
+ignore = ["E501"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

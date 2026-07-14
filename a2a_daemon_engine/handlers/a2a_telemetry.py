@@ -16,9 +16,6 @@ Usage:
     telemetry = A2ATelemetry(service_name="a2a-daemon", logger=logger)
     telemetry.initialize()
 
-    # Instrument FastAPI app
-    telemetry.instrument_fastapi(app)
-
     # Instrument httpx client
     async with httpx.AsyncClient() as client:
         instrumented_client = telemetry.instrument_httpx(client)
@@ -36,7 +33,6 @@ __version__ = "1.0.0"
 try:
     from opentelemetry import trace
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
     from opentelemetry.propagate import extract, inject
     from opentelemetry.sdk.trace import TracerProvider
@@ -101,7 +97,7 @@ class A2ATelemetry:
             self.logger.warning(
                 "OpenTelemetry not available. Install with: "
                 "pip install opentelemetry-api opentelemetry-sdk "
-                "opentelemetry-instrumentation-fastapi opentelemetry-instrumentation-httpx"
+                "opentelemetry-instrumentation-httpx"
             )
             return False
 
@@ -159,26 +155,6 @@ class A2ATelemetry:
             SERVICE_NAME: self.service_name,
             SERVICE_VERSION: self.service_version,
         })
-
-    def instrument_fastapi(self, app: Any) -> None:
-        """
-        Instrument FastAPI application.
-
-        Args:
-            app: FastAPI application instance
-        """
-        if not self._initialized or not OPENTELEMETRY_AVAILABLE:
-            self.logger.warning("OpenTelemetry not initialized, skipping FastAPI instrumentation")
-            return
-
-        try:
-            FastAPIInstrumentor.instrument_app(
-                app,
-                tracer_provider=self._provider,
-            )
-            self.logger.info("FastAPI instrumented with OpenTelemetry")
-        except Exception as e:
-            self.logger.error(f"Failed to instrument FastAPI: {e}")
 
     def instrument_httpx(self, client: Any) -> Any:
         """
