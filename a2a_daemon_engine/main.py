@@ -74,11 +74,29 @@ class A2ADaemonEngine(Graphql):
 
     def a2a_core_graphql(self, **params: Dict[str, Any]) -> Any:
         self._apply_partition_defaults(params)
-        return self.execute(self.__class__.build_graphql_schema(), **params)
+        partition_key = params.get("partition_key") or params.get("context", {}).get(
+            "partition_key"
+        )
+        if partition_key and Config.DB_BACKEND == "postgresql":
+            Config._set_rls_context(partition_key)
+        try:
+            return self.execute(self.__class__.build_graphql_schema(), **params)
+        finally:
+            if Config.DB_BACKEND == "postgresql" and Config.db_session:
+                Config.db_session.remove()
 
     def a2a(self, **params: Dict[str, Any]) -> Any:
         """Serverless A2A JSON-RPC protocol handler."""
         self._apply_partition_defaults(params)
+
+        # In PostgreSQL mode, set the RLS tenant context for this A2A call so
+        # the executor's direct repo writes (a2a_core.py) and any internal
+        # GraphQL calls are tenant-isolated. No-op in DynamoDB mode.
+        _pk = params.get("partition_key") or params.get("context", {}).get(
+            "partition_key"
+        )
+        if _pk and Config.DB_BACKEND == "postgresql":
+            Config._set_rls_context(_pk)
 
         if params.get("jsonrpc") != "2.0":
             raise ValueError("A2A protocol calls must use JSON-RPC 2.0 format")
@@ -324,9 +342,17 @@ def dispatch_graphql(**params: Dict[str, Any]) -> Any:
 
 def dispatch_a2a(**params: Dict[str, Any]) -> Any:
     """Gateway dispatch entry point for A2A JSON-RPC messages."""
-    return _engine().a2a(**params)
+    try:
+        return _engine().a2a(**params)
+    finally:
+        if Config.DB_BACKEND == "postgresql" and Config.db_session:
+            Config.db_session.remove()
 
 
 def dispatch_sse_message(**params: Dict[str, Any]) -> Any:
     """Gateway dispatch entry point for A2A SSE messages (POST /sse)."""
-    return _engine().sse_message(**params)
+    try:
+        return _engine().sse_message(**params)
+    finally:
+        if Config.DB_BACKEND == "postgresql" and Config.db_session:
+            Config.db_session.remove()
