@@ -38,6 +38,7 @@ class A2AMessageModel(Base):
     from_agent_id = Column(String, nullable=True)
     to_agent_id = Column(String, nullable=True)
     message_type = Column(String, nullable=True)
+    task_id = Column(String, nullable=True)  # Links to a2a_tasks.task_id
     payload = Column(JSONB, nullable=True)
     status = Column(String, nullable=True)  # sent, delivered, acknowledged, failed
 

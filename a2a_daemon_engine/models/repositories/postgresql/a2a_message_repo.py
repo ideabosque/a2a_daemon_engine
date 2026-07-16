@@ -169,6 +169,7 @@ class A2AMessagePGRepository(EntityRepository):
             "from_agent_id": kwargs.get("from_agent_id"),
             "to_agent_id": kwargs.get("to_agent_id"),
             "message_type": kwargs.get("message_type"),
+            "task_id": kwargs.get("task_id"),
             "payload": kwargs.get("payload", {}),
             "status": kwargs.get("status", "sent"),
             "created_at": pendulum.now("UTC"),

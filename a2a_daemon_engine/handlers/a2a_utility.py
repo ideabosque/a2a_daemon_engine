@@ -288,9 +288,16 @@ async def get_a2a_task(partition_key: str, task_id: str) -> dict[str, Any]:
         Task data if found, None otherwise
     """
 
+    # NOTE: a2aTask takes ONLY task_id as an argument — the resolver reads the
+    # partition from info.context["partition_key"], which a2a_core_graphql()
+    # sets from the partition_key kwarg below. Passing partitionKey as a GraphQL
+    # argument makes the whole query fail validation ("Unknown argument
+    # 'partitionKey' on field 'Query.a2aTask'"), and the error is swallowed
+    # below, so this function silently returned None for every task.
+    # partitionKey is still selectable as a response *field*.
     query = """
-        query GetA2aTask($partitionKey: String!, $taskId: String!) {
-            a2aTask(partitionKey: $partitionKey, taskId: $taskId) {
+        query GetA2aTask($taskId: String!) {
+            a2aTask(taskId: $taskId) {
                 partitionKey
                 taskId
                 taskType
@@ -307,7 +314,6 @@ async def get_a2a_task(partition_key: str, task_id: str) -> dict[str, Any]:
     """
 
     variables = {
-        "partitionKey": partition_key,
         "taskId": task_id,
     }
 

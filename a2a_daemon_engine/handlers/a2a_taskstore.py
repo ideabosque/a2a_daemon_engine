@@ -14,7 +14,14 @@ Interface Contract:
 - async def get(task_id: str, context=None) -> Task | None
 - async def save(task: Task, context=None) -> None
 - async def delete(task_id: str, context=None) -> None
+- async def list(params: ListTasksRequest, context=None) -> ListTasksResponse
+
+``from __future__ import annotations`` is required: the ``list`` method (named
+by the TaskStore ABC) shadows the builtin ``list`` inside the class body, which
+would otherwise break the ``list[str]`` annotations on the methods below it.
 """
+
+from __future__ import annotations
 
 import logging
 from collections import OrderedDict, deque
@@ -392,6 +399,51 @@ class DynamoDBA2ATaskStore(TaskStore):
     # =============================================================================
     # ADDITIONAL HELPER METHODS (Beyond canonical interface)
     # =============================================================================
+
+    async def list(
+        self,
+        params: Any = None,
+        context: ServerCallContext | None = None,
+    ) -> Any:
+        """List tasks — canonical A2A SDK ``TaskStore`` interface.
+
+        Required by the ``TaskStore`` ABC. Without it this class cannot be
+        instantiated and the daemon silently falls back to
+        ``InMemoryTaskStore``, losing all task persistence.
+
+        Delegates to the richer :meth:`list_tasks` extension and adapts the
+        result into the SDK's ``ListTasksResponse``. Filtering by
+        ``params.context_id`` is what scopes a listing to one conversation.
+        """
+        from a2a.types import ListTasksResponse
+
+        try:
+            context_id = getattr(params, "context_id", None) or None
+            page_size = int(getattr(params, "page_size", 0) or 20)
+            page_token = getattr(params, "page_token", None) or None
+
+            task_dicts, next_page_token = await self.list_tasks(
+                context_id=context_id,
+                page_size=page_size,
+                page_token=page_token,
+            )
+
+            tasks = []
+            for task_dict in task_dicts:
+                task = self._dict_to_task(task_dict)
+                # _dict_to_task falls back to the raw dict when Task
+                # construction fails; only real Tasks belong in the response.
+                if isinstance(task, Task):
+                    tasks.append(task)
+
+            response = ListTasksResponse(tasks=tasks)
+            if next_page_token:
+                response.next_page_token = next_page_token
+            return response
+
+        except Exception as e:
+            self.logger.error(f"Failed to list tasks: {e}", exc_info=True)
+            return ListTasksResponse(tasks=[])
 
     async def list_tasks(
         self,
