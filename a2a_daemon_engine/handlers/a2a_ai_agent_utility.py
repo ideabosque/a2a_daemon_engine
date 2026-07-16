@@ -69,6 +69,10 @@ class StreamingChunk:
 
     name: str = ""
     value: str = ""
+    # Stream-frame metadata forwarded by the handler (e.g. suffix /
+    # message_group_id / data_format). Lets SSE clients distinguish reasoning
+    # tokens from answer tokens. Empty for handlers that don't supply it.
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -77,9 +81,29 @@ class StreamingState:
 
     run_id: str = ""
     chunks: list[str] = field(default_factory=list)
+    # Reasoning tokens are kept OUT of `chunks`: `chunks` becomes the returned
+    # message content, and reasoning is the model's private thinking, not part
+    # of the answer. Surfaced separately as metadata["reasoning"].
+    reasoning_chunks: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     final_result: BridgeResult | None = None
+
+
+def _is_reasoning_meta(meta: dict[str, Any] | None) -> bool:
+    """True when a stream frame's metadata marks it as reasoning.
+
+    ai_agent_handler folds the handler's reasoning suffix into message_group_id
+    ("{connection_id}-{run_uuid}-rs#1"), so an "rs#" marker in any forwarded
+    metadata field identifies a reasoning chunk.
+    """
+    if not isinstance(meta, dict):
+        return False
+    for value in meta.values():
+        lowered = str(value or "").lower()
+        if "rs#" in lowered or "reason" in lowered:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -963,7 +987,14 @@ async def execute_ai_agent_streaming(
                 # Tool execution completed — metadata only, not a token
                 continue
             if parsed.name == "token":
-                state.chunks.append(parsed.value)
+                # Reasoning must not leak into the answer: `chunks` becomes the
+                # returned message content, so reasoning is accumulated apart
+                # and surfaced as metadata["reasoning"] below. Both still stream
+                # to SSE (tagged), so clients can render them separately.
+                if _is_reasoning_meta(parsed.meta):
+                    state.reasoning_chunks.append(parsed.value)
+                else:
+                    state.chunks.append(parsed.value)
                 # Emit to SSE only (per-chunk) — the SDK EventQueue gets a
                 # single accumulated Message after the stream completes,
                 # not one Message per token (A2A SDK v2 rejects multiple
@@ -971,6 +1002,7 @@ async def execute_ai_agent_streaming(
                 await _emit_to_sse(
                     streaming_manager, sse_task_id, parsed.value, _logger,
                     partition_key=partition_key,
+                    metadata=parsed.meta,
                 )
 
         # The handler sets stream_event inside its own `finally`, which runs
@@ -992,6 +1024,10 @@ async def execute_ai_agent_streaming(
                 role="agent",
                 metadata={**handler_metadata, **state.metadata},
             )
+            # Return the model's reasoning alongside (never inside) the answer.
+            reasoning = "".join(state.reasoning_chunks)
+            if reasoning:
+                result.metadata["reasoning"] = reasoning
             if state.run_id:
                 result.metadata.setdefault("run_id", state.run_id)
 
@@ -1078,18 +1114,29 @@ async def _emit_to_sse(
     text: str,
     logger: logging.Logger | None = None,
     partition_key: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Emit a text chunk into the SSEEventQueue as a task artifact.
 
     Also broadcasts to the gateway SSE manager (partition-scoped) so clients
     attached to ``GET /{endpoint_id}/sse`` receive live streaming tokens.
+
+    ``metadata`` carries the originating stream-frame fields (suffix,
+    message_group_id, data_format) when the handler supplies them, so clients
+    can separate reasoning tokens from answer tokens. It is attached under
+    ``artifact["metadata"]`` and omitted entirely when empty, keeping the
+    artifact shape unchanged for handlers that don't provide it.
     """
+    artifact: dict[str, Any] = {"type": "text", "text": text}
+    if metadata:
+        artifact["metadata"] = metadata
+
     if streaming_manager is not None:
         try:
             if hasattr(streaming_manager, "emit_task_artifact"):
                 await streaming_manager.emit_task_artifact(
                     task_id=task_id,
-                    artifact={"type": "text", "text": text},
+                    artifact=dict(artifact),
                 )
         except Exception as e:
             if logger:
@@ -1098,7 +1145,7 @@ async def _emit_to_sse(
     await _broadcast_to_gateway_sse(
         partition_key,
         {"type": "task_artifact", "task_id": task_id,
-         "artifact": {"type": "text", "text": text}},
+         "artifact": dict(artifact)},
         logger,
     )
 
@@ -1166,16 +1213,20 @@ async def _broadcast_to_gateway_sse(
 def _parse_chunk(chunk: Any) -> StreamingChunk:
     """Parse a core-engine stream queue item into StreamingChunk."""
     if isinstance(chunk, dict):
+        meta = chunk.get("meta")
         return StreamingChunk(
             name=chunk.get("name", ""),
             value=chunk.get("value", ""),
+            meta=meta if isinstance(meta, dict) else {},
         )
     if isinstance(chunk, str):
         return StreamingChunk(name="token", value=chunk)
     # Object fallback
+    meta = getattr(chunk, "meta", None)
     return StreamingChunk(
         name=getattr(chunk, "name", "token"),
         value=getattr(chunk, "value", str(chunk)),
+        meta=meta if isinstance(meta, dict) else {},
     )
 
 

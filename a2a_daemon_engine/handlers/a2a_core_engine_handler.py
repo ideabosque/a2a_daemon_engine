@@ -41,6 +41,17 @@ from .config import Config
 
 __author__ = "bibow"
 
+# Stream-frame fields forwarded from the gateway WebSocket to SSE consumers as
+# artifact metadata, so clients can separate reasoning tokens from answer tokens.
+#
+# The reasoning marker rides in `message_group_id`: ai_agent_handler builds it as
+# f"{connection_id}-{run_uuid}" and appends the handler's suffix for reasoning
+# chunks, giving e.g. "conn123-run456-rs#1". There is NO standalone `suffix`
+# field on the wire ("suffix" is kept here only as a defensive alias, matching
+# chat_websocket.py). Kept to a fixed allowlist so the artifact stays small and
+# the payload shape is predictable.
+_STREAM_META_KEYS = ("message_group_id", "data_format", "index", "suffix", "type")
+
 
 class CoreEngineAgentHandler:
     """A2A handler that bridges to ai_agent_core_engine via the gateway."""
@@ -382,7 +393,19 @@ class CoreEngineAgentHandler:
                     is_end = message.get("is_message_end", False)
 
                     chunks.append(delta)
-                    stream_queue.put({"name": "token", "value": delta})
+                    # Forward the frame's stream metadata alongside the token.
+                    # ai_agent_core marks reasoning frames with an "rs#" marker
+                    # in suffix / message_group_id; without this the downstream
+                    # SSE clients cannot tell reasoning tokens from answer
+                    # tokens (they arrive as indistinguishable plain text).
+                    meta = {
+                        key: message[key]
+                        for key in _STREAM_META_KEYS
+                        if message.get(key) not in (None, "")
+                    }
+                    stream_queue.put(
+                        {"name": "token", "value": delta, "meta": meta}
+                    )
 
                     if is_end:
                         # Drain the trailing dispatch result (short timeout)
