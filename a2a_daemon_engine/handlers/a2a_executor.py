@@ -496,6 +496,20 @@ class A2ADaemonExecutor(AgentExecutor):
                 "runId",
                 "run_id",
             )
+            # A2A context_id — the conversation this task belongs to. Same
+            # contract as _handle_message_response: never minted locally (the
+            # agent handler's backend owns the thread and returns its id, which
+            # we adopt below). For the core-engine bridge the context IS the
+            # engine's thread, so an explicit thread_uuid wins and the
+            # context_id serves as the thread key otherwise.
+            context_id = _context_get_any(
+                request_context,
+                "context_id",
+                "contextId",
+                "session_id",
+                "sessionId",
+            )
+            thread_uuid = thread_uuid or context_id
             streaming = _streaming_requested(request_context, task_data)
             if streaming and not getattr(self.config, "a2a_streaming_enabled", True):
                 self.logger.info(
@@ -516,6 +530,7 @@ class A2ADaemonExecutor(AgentExecutor):
                         assigned_agent_id=agent_uuid or "",
                         status="in_progress",
                         input_data={"user_query": user_input or task_data.get("description", "")},
+                        context_id=context_id,
                         updated_by="a2a_daemon",
                     )
                     # Extract generated task_id from the response if not provided
@@ -546,10 +561,17 @@ class A2ADaemonExecutor(AgentExecutor):
                         on_run_id=self._on_external_run_id,
                         task_id=task_id,
                     )
+                    # Adopt the thread the agent handler used as this
+                    # conversation's context_id, so the next turn resumes it.
+                    effective_context_id = context_id or (result.metadata or {}).get(
+                        "thread_uuid"
+                    )
                     if result.error:
                         await _emit_event(
                             event_queue,
-                            _agent_text_message(f"AI agent error: {result.error}"),
+                            _agent_text_message(
+                                f"AI agent error: {result.error}", effective_context_id
+                            ),
                         )
                     # Update A2A task record status for streaming path
                     if task_id and hasattr(self.config.a2a_core, "insert_update_a2a_task"):
@@ -561,10 +583,13 @@ class A2ADaemonExecutor(AgentExecutor):
                                 assigned_agent_id=agent_uuid or "",
                                 status="failed" if result.error else "completed",
                                 output_data={"content": result.content[:500]} if result.content else None,
+                                context_id=effective_context_id,
                                 updated_by="a2a_daemon",
                             )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            self.logger.warning(
+                                f"A2A task completion persist (streaming) failed: {e}"
+                            )
                     return
                 else:
                     # Non-streaming path — no WORKING status (SDK v2 rejects
@@ -579,13 +604,24 @@ class A2ADaemonExecutor(AgentExecutor):
                         task_id=task_id,
                     )
 
+                # Adopt the thread the agent handler used as this
+                # conversation's context_id, so the next turn resumes it.
+                effective_context_id = context_id or (result.metadata or {}).get(
+                    "thread_uuid"
+                )
+
                 if result.error:
                     await _emit_event(
                         event_queue,
-                        _agent_text_message(f"AI agent error: {result.error}"),
+                        _agent_text_message(
+                            f"AI agent error: {result.error}", effective_context_id
+                        ),
                     )
                 else:
-                    await _emit_event(event_queue, _agent_text_message(result.content))
+                    await _emit_event(
+                        event_queue,
+                        _agent_text_message(result.content, effective_context_id),
+                    )
                 # NOTE: No COMPLETED/FAILED status events emitted here — the A2A
                 # SDK v2 on_message_send rejects TaskStatusUpdateEvent.  Status
                 # events are only emitted for the SDK's native streaming path
@@ -600,10 +636,13 @@ class A2ADaemonExecutor(AgentExecutor):
                             assigned_agent_id=agent_uuid or "",
                             status="failed" if result.error else "completed",
                             output_data={"content": result.content[:500]} if result.content else None,
+                            context_id=effective_context_id,
                             updated_by="a2a_daemon",
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        self.logger.warning(
+                            f"A2A task completion persist failed: {e}"
+                        )
                 return
             except Exception as e:
                 self.logger.warning(

@@ -875,15 +875,23 @@ async def execute_ai_agent_streaming(
     if ask_model is None:
         return BridgeResult(error="Handler has no ask_model method")
 
-    # 6. Start background thread for the LLM call
+    # 6. Start background thread for the LLM call.
+    # ``llm_output`` captures ask_model's return value: the streamed chunks
+    # carry only text, while the handler's final dict carries the metadata the
+    # caller needs — notably ``thread_uuid``, which the executor adopts as the
+    # conversation's context_id. Discarding it leaves context_id unrecorded.
+    llm_output: dict[str, Any] = {}
+
     def _run_llm() -> None:
         try:
-            ask_model(
+            output = ask_model(
                 input_messages=messages,
                 context=context,
                 stream_queue=stream_queue,
                 stream_event=stream_event,
             )
+            if isinstance(output, dict):
+                llm_output.update(output)
         except Exception as exc:
             _logger.error(f"Streaming ask_model thread error: {exc}", exc_info=True)
             # Put an error chunk so the drain loop can react
@@ -965,15 +973,24 @@ async def execute_ai_agent_streaming(
                     partition_key=partition_key,
                 )
 
+        # The handler sets stream_event inside its own `finally`, which runs
+        # before _run_llm records the return value — so the drain loop can exit
+        # first. Join briefly so llm_output is populated before we read it.
+        llm_thread.join(timeout=5)
+        handler_metadata = llm_output.get("metadata")
+        if not isinstance(handler_metadata, dict):
+            handler_metadata = {}
+
         # Final state
         final_content = "".join(state.chunks)
         if state.error:
             result = BridgeResult(error=state.error)
         else:
+            # Drained-stream state wins over the handler's closing metadata.
             result = BridgeResult(
                 content=final_content,
                 role="agent",
-                metadata=dict(state.metadata),
+                metadata={**handler_metadata, **state.metadata},
             )
             if state.run_id:
                 result.metadata.setdefault("run_id", state.run_id)
