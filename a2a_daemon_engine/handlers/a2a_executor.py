@@ -15,6 +15,7 @@ This executor follows the official pattern:
 
 import logging
 import threading
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,15 +64,28 @@ def _status_update_event(state: TaskState, **kwargs: Any) -> TaskStatusUpdateEve
         return TaskStatusUpdateEvent(status=TaskStatus(state=state))
 
 
-def _agent_text_message(text: str) -> Any:
-    """Create an agent text message across SDK releases."""
-    if new_agent_text_message is not None:
-        return new_agent_text_message(text)
+def _agent_text_message(text: str, context_id: str | None = None) -> Any:
+    """Create an agent text message across SDK releases.
 
-    return Message(
-        role=Role.ROLE_AGENT,
-        parts=[Part(text=text)],
-    )
+    ``context_id`` is stamped on the reply so the client can echo it back to
+    continue the conversation — the server owns that id, so this is the only
+    way a caller can learn it.
+    """
+    if new_agent_text_message is not None:
+        message = new_agent_text_message(text)
+    else:
+        message = Message(
+            role=Role.ROLE_AGENT,
+            parts=[Part(text=text)],
+        )
+
+    if context_id:
+        try:
+            message.context_id = context_id
+        except Exception:  # pragma: no cover - SDK variants without the field
+            pass
+
+    return message
 
 
 async def _emit_event(event_queue: EventQueue, event: Any) -> None:
@@ -309,20 +323,97 @@ class A2ADaemonExecutor(AgentExecutor):
                 "agentId",
                 "agent_id",
             )
+            # Create a task record; the repo auto-generates task_id if not
+            # provided. We capture the returned task_id for message linking.
+            task_id = ""
+            task_type = "message_response"
+
+            # A2A context_id groups the tasks/messages of one conversation, and
+            # is the thread key handed to the agent handler — which is what
+            # makes multi-turn history work.
+            #
+            # It is deliberately NOT invented here. For the core-engine bridge
+            # the context IS the engine's thread_uuid, and that thread is
+            # created by the engine: passing a locally-minted UUID would fail
+            # with "Not found any thread" on the next turn. So on the first turn
+            # this is None (the engine opens a thread and returns its id, which
+            # we adopt as the context_id below); afterwards the client echoes it
+            # back and we reuse it.
+            context_id = _context_get_any(
+                request_context,
+                "context_id",
+                "contextId",
+                "session_id",
+                "sessionId",
+            )
+
+            # Persist task (in_progress)
+            if hasattr(self.config.a2a_core, "insert_update_a2a_task"):
+                try:
+                    task_result = await self.config.a2a_core.insert_update_a2a_task(
+                        partition_key=partition_key,
+                        task_type=task_type,
+                        assigned_agent_id=agent_uuid or "",
+                        status="in_progress",
+                        input_data={"user_query": user_input},
+                        context_id=context_id,
+                        updated_by="a2a_daemon",
+                    )
+                    # Extract generated task_id from the response
+                    if task_result and isinstance(task_result, dict):
+                        import json as _json
+                        raw = task_result
+                        if "body" in raw:
+                            raw = _json.loads(raw["body"])
+                        data = raw.get("data", {}).get("insertUpdateA2aTask", {})
+                        if data and data.get("a2aTask"):
+                            task_id = data["a2aTask"].get("taskId", "")
+                except Exception as e:
+                    self.logger.warning(f"A2A task persist (in_progress) failed: {e}")
+
             try:
                 result = await execute_ai_agent_non_streaming(
                     partition_key=partition_key,
                     agent_uuid=agent_uuid,
                     user_query=user_input,
+                    thread_uuid=context_id,
                     logger=self.logger,
+                    task_id=task_id,
                 )
+                # Adopt the thread the agent handler used as this
+                # conversation's context_id, so the next turn resumes it.
+                effective_context_id = context_id or (result.metadata or {}).get(
+                    "thread_uuid"
+                )
+
                 if result.error:
                     await _emit_event(
                         event_queue,
-                        _agent_text_message(f"AI agent error: {result.error}"),
+                        _agent_text_message(
+                            f"AI agent error: {result.error}", effective_context_id
+                        ),
                     )
                 else:
-                    await _emit_event(event_queue, _agent_text_message(result.content))
+                    await _emit_event(
+                        event_queue,
+                        _agent_text_message(result.content, effective_context_id),
+                    )
+
+                # Update task status
+                if hasattr(self.config.a2a_core, "insert_update_a2a_task"):
+                    try:
+                        await self.config.a2a_core.insert_update_a2a_task(
+                            partition_key=partition_key,
+                            task_id=task_id,
+                            task_type="message_response",
+                            assigned_agent_id=agent_uuid or "",
+                            status="failed" if result.error else "completed",
+                            output_data={"content": result.content[:500]} if result.content else None,
+                            context_id=effective_context_id,
+                            updated_by="a2a_daemon",
+                        )
+                    except Exception as e:
+                        self.logger.warning(f"A2A task completion persist failed: {e}")
                 return
             except Exception as e:
                 self.logger.warning(
@@ -412,6 +503,35 @@ class A2ADaemonExecutor(AgentExecutor):
                 )
                 streaming = False
 
+            # Let the persistence layer generate task_id; we need it
+            # for linking messages to this task.
+            task_id = _dict_get_any(task_data, "task_id", "taskId", "id", default="")
+            task_type = _dict_get_any(task_data, "task_type", "taskType", default="ai_agent")
+            if hasattr(self.config.a2a_core, "insert_update_a2a_task"):
+                try:
+                    task_result = await self.config.a2a_core.insert_update_a2a_task(
+                        partition_key=partition_key,
+                        task_id=task_id if task_id else None,
+                        task_type=task_type,
+                        assigned_agent_id=agent_uuid or "",
+                        status="in_progress",
+                        input_data={"user_query": user_input or task_data.get("description", "")},
+                        updated_by="a2a_daemon",
+                    )
+                    # Extract generated task_id from the response if not provided
+                    if not task_id and task_result and isinstance(task_result, dict):
+                        import json as _json
+                        # Graphql.execute returns {statusCode, headers, body}
+                        # where body is a JSON string
+                        raw = task_result
+                        if "body" in raw:
+                            raw = _json.loads(raw["body"])
+                        data = raw.get("data", {}).get("insertUpdateA2aTask", {})
+                        if data and data.get("a2aTask"):
+                            task_id = data["a2aTask"].get("taskId", "")
+                except Exception as e:
+                    self.logger.warning(f"A2A task persist (in_progress) failed: {e}")
+
             try:
                 if streaming:
                     result = await execute_ai_agent_streaming(
@@ -424,12 +544,27 @@ class A2ADaemonExecutor(AgentExecutor):
                         run_uuid=run_uuid,
                         logger=self.logger,
                         on_run_id=self._on_external_run_id,
+                        task_id=task_id,
                     )
                     if result.error:
                         await _emit_event(
                             event_queue,
                             _agent_text_message(f"AI agent error: {result.error}"),
                         )
+                    # Update A2A task record status for streaming path
+                    if task_id and hasattr(self.config.a2a_core, "insert_update_a2a_task"):
+                        try:
+                            await self.config.a2a_core.insert_update_a2a_task(
+                                partition_key=partition_key,
+                                task_id=task_id,
+                                task_type=task_type,
+                                assigned_agent_id=agent_uuid or "",
+                                status="failed" if result.error else "completed",
+                                output_data={"content": result.content[:500]} if result.content else None,
+                                updated_by="a2a_daemon",
+                            )
+                        except Exception:
+                            pass
                     return
                 else:
                     # Non-streaming path — no WORKING status (SDK v2 rejects
@@ -441,6 +576,7 @@ class A2ADaemonExecutor(AgentExecutor):
                         thread_uuid=thread_uuid,
                         run_uuid=run_uuid,
                         logger=self.logger,
+                        task_id=task_id,
                     )
 
                 if result.error:
@@ -454,6 +590,20 @@ class A2ADaemonExecutor(AgentExecutor):
                 # SDK v2 on_message_send rejects TaskStatusUpdateEvent.  Status
                 # events are only emitted for the SDK's native streaming path
                 # (send_streaming_message), not for message/send.
+                # Update A2A task record status
+                if task_id and hasattr(self.config.a2a_core, "insert_update_a2a_task"):
+                    try:
+                        await self.config.a2a_core.insert_update_a2a_task(
+                            partition_key=partition_key,
+                            task_id=task_id,
+                            task_type=task_type,
+                            assigned_agent_id=agent_uuid or "",
+                            status="failed" if result.error else "completed",
+                            output_data={"content": result.content[:500]} if result.content else None,
+                            updated_by="a2a_daemon",
+                        )
+                    except Exception:
+                        pass
                 return
             except Exception as e:
                 self.logger.warning(

@@ -27,6 +27,7 @@ import logging
 import queue as _queue
 import threading
 import time
+import uuid as _uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -531,6 +532,30 @@ def create_core_engine_context(
     }
 
 
+def _apply_thread_context(
+    context: dict[str, Any],
+    thread_uuid: str | None,
+    run_uuid: str | None = None,
+) -> None:
+    """Publish the conversation keys onto the handler context.
+
+    Handlers that delegate history to their backend (e.g.
+    ``CoreEngineAgentHandler``) read ``thread_uuid`` from this dict and forward
+    it as ``threadUuid`` so ai_agent_core_engine loads that thread's history
+    instead of opening a fresh thread on every turn. ``create_core_engine_context``
+    does not carry it, so without this the conversation has no memory.
+
+    The A2A ``context_id`` is what gets passed in as ``thread_uuid`` — the two
+    identify the same conversation on either side of the bridge.
+    """
+    if not isinstance(context, dict):
+        return
+    if thread_uuid:
+        context["thread_uuid"] = thread_uuid
+    if run_uuid:
+        context["run_uuid"] = run_uuid
+
+
 # ---------------------------------------------------------------------------
 # 10.1.5 Output normalization
 # ---------------------------------------------------------------------------
@@ -548,7 +573,9 @@ def normalize_final_output(output: Any) -> BridgeResult:
     if isinstance(output, dict):
         content = output.get("content") or output.get("text") or output.get("message") or ""
         role = output.get("role") or output.get("output_role") or "agent"
-        message_id = output.get("message_id") or output.get("messageId") or ""
+        # A2A daemon generates its own message_id; don't borrow the
+        # core engine's chatcmpl-xxx ID.
+        message_id = f"msg-{_uuid.uuid4().hex}"
         output_files = output.get("output_files") or output.get("outputFiles") or []
         metadata = output.get("metadata") or {}
         error = output.get("error")
@@ -566,7 +593,9 @@ def normalize_final_output(output: Any) -> BridgeResult:
     # Object with attributes
     content = getattr(output, "content", None) or getattr(output, "text", None) or ""
     role = getattr(output, "role", None) or getattr(output, "output_role", None) or "agent"
-    message_id = getattr(output, "message_id", None) or getattr(output, "messageId", "") or ""
+    # A2A daemon generates its own message_id; don't borrow the
+    # core engine's chatcmpl-xxx ID.
+    message_id = f"msg-{_uuid.uuid4().hex}"
     output_files = getattr(output, "output_files", None) or getattr(output, "outputFiles", []) or []
     metadata = getattr(output, "metadata", None) or {}
     error = getattr(output, "error", None)
@@ -634,6 +663,7 @@ async def _persist_thread_run_message(
     content: str,
     metadata: dict[str, Any] | None = None,
     logger: logging.Logger | None = None,
+    task_id: str | None = None,
 ) -> None:
     """Persist thread, run, and message records via Config.a2a_core GraphQL."""
     if not Config.a2a_core:
@@ -666,6 +696,7 @@ async def _persist_thread_run_message(
                 content=content,
                 metadata=metadata or {},
                 updated_by="a2a_daemon",
+                task_id=task_id,
             )
     except Exception as e:
         if _logger:
@@ -684,6 +715,7 @@ async def execute_ai_agent_non_streaming(
     thread_uuid: str | None = None,
     run_uuid: str | None = None,
     logger: logging.Logger | None = None,
+    task_id: str | None = None,
 ) -> BridgeResult:
     """
     Full non-streaming lifecycle: resolve agent, load handler, build messages,
@@ -725,6 +757,7 @@ async def execute_ai_agent_non_streaming(
         part_id=part_id,
         logger=_logger,
     )
+    _apply_thread_context(context, thread_uuid, run_uuid)
 
     # 5. Invoke handler
     ask_model = getattr(handler, "ask_model", None)
@@ -760,6 +793,7 @@ async def execute_ai_agent_non_streaming(
         content=result.content,
         metadata=result.metadata,
         logger=_logger,
+        task_id=task_id,
     )
 
     return result
@@ -781,6 +815,7 @@ async def execute_ai_agent_streaming(
     stream_timeout: float | None = None,
     logger: logging.Logger | None = None,
     on_run_id: Any = None,
+    task_id: str | None = None,
 ) -> BridgeResult:
     """
     Full streaming lifecycle with dual-path emission.
@@ -830,6 +865,7 @@ async def execute_ai_agent_streaming(
         part_id=part_id,
         logger=_logger,
     )
+    _apply_thread_context(context, thread_uuid, run_uuid)
 
     # 5. Prepare streaming primitives
     stream_queue: _queue.Queue[Any] = _queue.Queue()
@@ -863,7 +899,7 @@ async def execute_ai_agent_streaming(
 
     # 7. Drain loop with dual-path emission
     state = StreamingState()
-    task_id = run_uuid or thread_uuid or "streaming-task"
+    sse_task_id = run_uuid or thread_uuid or "streaming-task"
 
     try:
         start_time = time.monotonic()
@@ -898,7 +934,7 @@ async def execute_ai_agent_streaming(
                 # cancel/approval passthrough.
                 if on_run_id is not None:
                     try:
-                        _maybe_call_on_run_id(on_run_id, task_id, state.run_id, handler, stream_event)
+                        _maybe_call_on_run_id(on_run_id, sse_task_id, state.run_id, handler, stream_event)
                     except Exception as cb_err:
                         _logger.warning(f"on_run_id callback failed: {cb_err}")
                 continue
@@ -906,7 +942,7 @@ async def execute_ai_agent_streaming(
                 # Hermes requires human approval — emit INPUT_REQUIRED to A2A
                 await _emit_status_to_sdk(event_queue, "INPUT_REQUIRED", _logger)
                 await _emit_status_to_sse(
-                    streaming_manager, task_id, "INPUT_REQUIRED", _logger,
+                    streaming_manager, sse_task_id, "INPUT_REQUIRED", _logger,
                     partition_key=partition_key,
                 )
                 state.metadata["pending_approval"] = parsed.value
@@ -925,7 +961,7 @@ async def execute_ai_agent_streaming(
                 # not one Message per token (A2A SDK v2 rejects multiple
                 # Message objects from on_message_send_stream).
                 await _emit_to_sse(
-                    streaming_manager, task_id, parsed.value, _logger,
+                    streaming_manager, sse_task_id, parsed.value, _logger,
                     partition_key=partition_key,
                 )
 
@@ -957,7 +993,7 @@ async def execute_ai_agent_streaming(
 
         # Emit final status to SSE only (not SDK EventQueue)
         await _emit_status_to_sse(
-            streaming_manager, task_id, "COMPLETED" if not state.error else "FAILED", _logger,
+            streaming_manager, sse_task_id, "COMPLETED" if not state.error else "FAILED", _logger,
             partition_key=partition_key,
         )
 
@@ -971,6 +1007,7 @@ async def execute_ai_agent_streaming(
             content=result.content,
             metadata=result.metadata,
             logger=_logger,
+            task_id=task_id,
         )
 
         return result

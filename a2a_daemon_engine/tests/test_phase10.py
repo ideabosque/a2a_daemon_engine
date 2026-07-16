@@ -312,7 +312,10 @@ class TestNormalizeFinalOutput:
         )
         assert r.content == "c1"
         assert r.role == "assistant"
-        assert r.message_id == "m1"
+        # The daemon mints its own message_id rather than borrowing the core
+        # engine's (e.g. chatcmpl-xxx), so "m1" must not be carried through.
+        assert r.message_id != "m1"
+        assert r.message_id.startswith("msg-")
         assert len(r.output_files) == 1
         assert r.metadata == {"k": "v"}
 

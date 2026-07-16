@@ -21,6 +21,7 @@ class InsertUpdateA2aMessage(Mutation):
         from_agent_id = String(required=True)
         to_agent_id = String(required=True)
         message_type = String(required=True)
+        task_id = String(required=False)
         payload = JSON(required=False)
         status = String(required=False)
 
