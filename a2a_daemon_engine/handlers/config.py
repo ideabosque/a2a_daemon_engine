@@ -181,6 +181,14 @@ class Config:
     hermes_model: str = "hermes-agent"
     hermes_stream_timeout: float = 300.0
 
+    # Phase 10: Core Engine (ai_agent_core_engine) gateway bridge settings
+    core_engine_graphql_url: str | None = None
+    core_engine_ws_url: str | None = None
+    core_engine_token: str | None = None
+    core_engine_agent_uuid: str | None = None
+    core_engine_updated_by: str | None = None
+    core_engine_stream_timeout: float = 120.0
+
     @classmethod
     def initialize(cls, logger: logging.Logger, **setting: Dict[str, Any]) -> None:
         try:
@@ -249,6 +257,31 @@ class Config:
         )
         cls.hermes_stream_timeout = float(
             setting.get("HERMES_STREAM_TIMEOUT", setting.get("hermes_stream_timeout", 300.0))
+        )
+
+        # Core Engine (ai_agent_core_engine) gateway bridge settings
+        cls.core_engine_graphql_url = (
+            setting.get("CORE_ENGINE_GRAPHQL_URL")
+            or setting.get("core_engine_graphql_url")
+        )
+        cls.core_engine_ws_url = (
+            setting.get("CORE_ENGINE_WS_URL")
+            or setting.get("core_engine_ws_url")
+        )
+        cls.core_engine_token = (
+            setting.get("CORE_ENGINE_TOKEN")
+            or setting.get("core_engine_token")
+        )
+        cls.core_engine_agent_uuid = (
+            setting.get("CORE_ENGINE_AGENT_UUID")
+            or setting.get("core_engine_agent_uuid")
+        )
+        cls.core_engine_updated_by = (
+            setting.get("CORE_ENGINE_UPDATED_BY")
+            or setting.get("core_engine_updated_by")
+        )
+        cls.core_engine_stream_timeout = float(
+            setting.get("CORE_ENGINE_STREAM_TIMEOUT", setting.get("core_engine_stream_timeout", 120.0))
         )
 
     @classmethod

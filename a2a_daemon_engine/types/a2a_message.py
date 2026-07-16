@@ -14,6 +14,7 @@ class A2AMessageType(ObjectType):
     from_agent_id = String()
     to_agent_id = String()
     message_type = String()
+    task_id = String()
     payload = JSON()
     status = String()
     created_at = DateTime()

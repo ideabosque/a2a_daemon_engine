@@ -24,6 +24,8 @@ class InsertUpdateA2aTask(Mutation):
         priority = String(required=False)
         input_data = JSON(required=False)
         output_data = JSON(required=False)
+        # A2A context_id — the conversation this task belongs to.
+        context_id = String(required=False)
         updated_by = String(required=False)
 
     @staticmethod

@@ -27,6 +27,7 @@ import logging
 import queue as _queue
 import threading
 import time
+import uuid as _uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -68,6 +69,10 @@ class StreamingChunk:
 
     name: str = ""
     value: str = ""
+    # Stream-frame metadata forwarded by the handler (e.g. suffix /
+    # message_group_id / data_format). Lets SSE clients distinguish reasoning
+    # tokens from answer tokens. Empty for handlers that don't supply it.
+    meta: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -76,9 +81,29 @@ class StreamingState:
 
     run_id: str = ""
     chunks: list[str] = field(default_factory=list)
+    # Reasoning tokens are kept OUT of `chunks`: `chunks` becomes the returned
+    # message content, and reasoning is the model's private thinking, not part
+    # of the answer. Surfaced separately as metadata["reasoning"].
+    reasoning_chunks: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     final_result: BridgeResult | None = None
+
+
+def _is_reasoning_meta(meta: dict[str, Any] | None) -> bool:
+    """True when a stream frame's metadata marks it as reasoning.
+
+    ai_agent_handler folds the handler's reasoning suffix into message_group_id
+    ("{connection_id}-{run_uuid}-rs#1"), so an "rs#" marker in any forwarded
+    metadata field identifies a reasoning chunk.
+    """
+    if not isinstance(meta, dict):
+        return False
+    for value in meta.values():
+        lowered = str(value or "").lower()
+        if "rs#" in lowered or "reason" in lowered:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -531,6 +556,30 @@ def create_core_engine_context(
     }
 
 
+def _apply_thread_context(
+    context: dict[str, Any],
+    thread_uuid: str | None,
+    run_uuid: str | None = None,
+) -> None:
+    """Publish the conversation keys onto the handler context.
+
+    Handlers that delegate history to their backend (e.g.
+    ``CoreEngineAgentHandler``) read ``thread_uuid`` from this dict and forward
+    it as ``threadUuid`` so ai_agent_core_engine loads that thread's history
+    instead of opening a fresh thread on every turn. ``create_core_engine_context``
+    does not carry it, so without this the conversation has no memory.
+
+    The A2A ``context_id`` is what gets passed in as ``thread_uuid`` — the two
+    identify the same conversation on either side of the bridge.
+    """
+    if not isinstance(context, dict):
+        return
+    if thread_uuid:
+        context["thread_uuid"] = thread_uuid
+    if run_uuid:
+        context["run_uuid"] = run_uuid
+
+
 # ---------------------------------------------------------------------------
 # 10.1.5 Output normalization
 # ---------------------------------------------------------------------------
@@ -548,7 +597,9 @@ def normalize_final_output(output: Any) -> BridgeResult:
     if isinstance(output, dict):
         content = output.get("content") or output.get("text") or output.get("message") or ""
         role = output.get("role") or output.get("output_role") or "agent"
-        message_id = output.get("message_id") or output.get("messageId") or ""
+        # A2A daemon generates its own message_id; don't borrow the
+        # core engine's chatcmpl-xxx ID.
+        message_id = f"msg-{_uuid.uuid4().hex}"
         output_files = output.get("output_files") or output.get("outputFiles") or []
         metadata = output.get("metadata") or {}
         error = output.get("error")
@@ -566,7 +617,9 @@ def normalize_final_output(output: Any) -> BridgeResult:
     # Object with attributes
     content = getattr(output, "content", None) or getattr(output, "text", None) or ""
     role = getattr(output, "role", None) or getattr(output, "output_role", None) or "agent"
-    message_id = getattr(output, "message_id", None) or getattr(output, "messageId", "") or ""
+    # A2A daemon generates its own message_id; don't borrow the
+    # core engine's chatcmpl-xxx ID.
+    message_id = f"msg-{_uuid.uuid4().hex}"
     output_files = getattr(output, "output_files", None) or getattr(output, "outputFiles", []) or []
     metadata = getattr(output, "metadata", None) or {}
     error = getattr(output, "error", None)
@@ -634,6 +687,7 @@ async def _persist_thread_run_message(
     content: str,
     metadata: dict[str, Any] | None = None,
     logger: logging.Logger | None = None,
+    task_id: str | None = None,
 ) -> None:
     """Persist thread, run, and message records via Config.a2a_core GraphQL."""
     if not Config.a2a_core:
@@ -666,6 +720,7 @@ async def _persist_thread_run_message(
                 content=content,
                 metadata=metadata or {},
                 updated_by="a2a_daemon",
+                task_id=task_id,
             )
     except Exception as e:
         if _logger:
@@ -684,6 +739,7 @@ async def execute_ai_agent_non_streaming(
     thread_uuid: str | None = None,
     run_uuid: str | None = None,
     logger: logging.Logger | None = None,
+    task_id: str | None = None,
 ) -> BridgeResult:
     """
     Full non-streaming lifecycle: resolve agent, load handler, build messages,
@@ -725,6 +781,7 @@ async def execute_ai_agent_non_streaming(
         part_id=part_id,
         logger=_logger,
     )
+    _apply_thread_context(context, thread_uuid, run_uuid)
 
     # 5. Invoke handler
     ask_model = getattr(handler, "ask_model", None)
@@ -760,6 +817,7 @@ async def execute_ai_agent_non_streaming(
         content=result.content,
         metadata=result.metadata,
         logger=_logger,
+        task_id=task_id,
     )
 
     return result
@@ -781,6 +839,7 @@ async def execute_ai_agent_streaming(
     stream_timeout: float | None = None,
     logger: logging.Logger | None = None,
     on_run_id: Any = None,
+    task_id: str | None = None,
 ) -> BridgeResult:
     """
     Full streaming lifecycle with dual-path emission.
@@ -830,6 +889,7 @@ async def execute_ai_agent_streaming(
         part_id=part_id,
         logger=_logger,
     )
+    _apply_thread_context(context, thread_uuid, run_uuid)
 
     # 5. Prepare streaming primitives
     stream_queue: _queue.Queue[Any] = _queue.Queue()
@@ -839,15 +899,23 @@ async def execute_ai_agent_streaming(
     if ask_model is None:
         return BridgeResult(error="Handler has no ask_model method")
 
-    # 6. Start background thread for the LLM call
+    # 6. Start background thread for the LLM call.
+    # ``llm_output`` captures ask_model's return value: the streamed chunks
+    # carry only text, while the handler's final dict carries the metadata the
+    # caller needs — notably ``thread_uuid``, which the executor adopts as the
+    # conversation's context_id. Discarding it leaves context_id unrecorded.
+    llm_output: dict[str, Any] = {}
+
     def _run_llm() -> None:
         try:
-            ask_model(
+            output = ask_model(
                 input_messages=messages,
                 context=context,
                 stream_queue=stream_queue,
                 stream_event=stream_event,
             )
+            if isinstance(output, dict):
+                llm_output.update(output)
         except Exception as exc:
             _logger.error(f"Streaming ask_model thread error: {exc}", exc_info=True)
             # Put an error chunk so the drain loop can react
@@ -863,7 +931,7 @@ async def execute_ai_agent_streaming(
 
     # 7. Drain loop with dual-path emission
     state = StreamingState()
-    task_id = run_uuid or thread_uuid or "streaming-task"
+    sse_task_id = run_uuid or thread_uuid or "streaming-task"
 
     try:
         start_time = time.monotonic()
@@ -898,7 +966,7 @@ async def execute_ai_agent_streaming(
                 # cancel/approval passthrough.
                 if on_run_id is not None:
                     try:
-                        _maybe_call_on_run_id(on_run_id, task_id, state.run_id, handler, stream_event)
+                        _maybe_call_on_run_id(on_run_id, sse_task_id, state.run_id, handler, stream_event)
                     except Exception as cb_err:
                         _logger.warning(f"on_run_id callback failed: {cb_err}")
                 continue
@@ -906,7 +974,7 @@ async def execute_ai_agent_streaming(
                 # Hermes requires human approval — emit INPUT_REQUIRED to A2A
                 await _emit_status_to_sdk(event_queue, "INPUT_REQUIRED", _logger)
                 await _emit_status_to_sse(
-                    streaming_manager, task_id, "INPUT_REQUIRED", _logger,
+                    streaming_manager, sse_task_id, "INPUT_REQUIRED", _logger,
                     partition_key=partition_key,
                 )
                 state.metadata["pending_approval"] = parsed.value
@@ -919,26 +987,47 @@ async def execute_ai_agent_streaming(
                 # Tool execution completed — metadata only, not a token
                 continue
             if parsed.name == "token":
-                state.chunks.append(parsed.value)
+                # Reasoning must not leak into the answer: `chunks` becomes the
+                # returned message content, so reasoning is accumulated apart
+                # and surfaced as metadata["reasoning"] below. Both still stream
+                # to SSE (tagged), so clients can render them separately.
+                if _is_reasoning_meta(parsed.meta):
+                    state.reasoning_chunks.append(parsed.value)
+                else:
+                    state.chunks.append(parsed.value)
                 # Emit to SSE only (per-chunk) — the SDK EventQueue gets a
                 # single accumulated Message after the stream completes,
                 # not one Message per token (A2A SDK v2 rejects multiple
                 # Message objects from on_message_send_stream).
                 await _emit_to_sse(
-                    streaming_manager, task_id, parsed.value, _logger,
+                    streaming_manager, sse_task_id, parsed.value, _logger,
                     partition_key=partition_key,
+                    metadata=parsed.meta,
                 )
+
+        # The handler sets stream_event inside its own `finally`, which runs
+        # before _run_llm records the return value — so the drain loop can exit
+        # first. Join briefly so llm_output is populated before we read it.
+        llm_thread.join(timeout=5)
+        handler_metadata = llm_output.get("metadata")
+        if not isinstance(handler_metadata, dict):
+            handler_metadata = {}
 
         # Final state
         final_content = "".join(state.chunks)
         if state.error:
             result = BridgeResult(error=state.error)
         else:
+            # Drained-stream state wins over the handler's closing metadata.
             result = BridgeResult(
                 content=final_content,
                 role="agent",
-                metadata=dict(state.metadata),
+                metadata={**handler_metadata, **state.metadata},
             )
+            # Return the model's reasoning alongside (never inside) the answer.
+            reasoning = "".join(state.reasoning_chunks)
+            if reasoning:
+                result.metadata["reasoning"] = reasoning
             if state.run_id:
                 result.metadata.setdefault("run_id", state.run_id)
 
@@ -957,7 +1046,7 @@ async def execute_ai_agent_streaming(
 
         # Emit final status to SSE only (not SDK EventQueue)
         await _emit_status_to_sse(
-            streaming_manager, task_id, "COMPLETED" if not state.error else "FAILED", _logger,
+            streaming_manager, sse_task_id, "COMPLETED" if not state.error else "FAILED", _logger,
             partition_key=partition_key,
         )
 
@@ -971,6 +1060,7 @@ async def execute_ai_agent_streaming(
             content=result.content,
             metadata=result.metadata,
             logger=_logger,
+            task_id=task_id,
         )
 
         return result
@@ -1024,18 +1114,29 @@ async def _emit_to_sse(
     text: str,
     logger: logging.Logger | None = None,
     partition_key: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     """Emit a text chunk into the SSEEventQueue as a task artifact.
 
     Also broadcasts to the gateway SSE manager (partition-scoped) so clients
     attached to ``GET /{endpoint_id}/sse`` receive live streaming tokens.
+
+    ``metadata`` carries the originating stream-frame fields (suffix,
+    message_group_id, data_format) when the handler supplies them, so clients
+    can separate reasoning tokens from answer tokens. It is attached under
+    ``artifact["metadata"]`` and omitted entirely when empty, keeping the
+    artifact shape unchanged for handlers that don't provide it.
     """
+    artifact: dict[str, Any] = {"type": "text", "text": text}
+    if metadata:
+        artifact["metadata"] = metadata
+
     if streaming_manager is not None:
         try:
             if hasattr(streaming_manager, "emit_task_artifact"):
                 await streaming_manager.emit_task_artifact(
                     task_id=task_id,
-                    artifact={"type": "text", "text": text},
+                    artifact=dict(artifact),
                 )
         except Exception as e:
             if logger:
@@ -1044,7 +1145,7 @@ async def _emit_to_sse(
     await _broadcast_to_gateway_sse(
         partition_key,
         {"type": "task_artifact", "task_id": task_id,
-         "artifact": {"type": "text", "text": text}},
+         "artifact": dict(artifact)},
         logger,
     )
 
@@ -1112,16 +1213,20 @@ async def _broadcast_to_gateway_sse(
 def _parse_chunk(chunk: Any) -> StreamingChunk:
     """Parse a core-engine stream queue item into StreamingChunk."""
     if isinstance(chunk, dict):
+        meta = chunk.get("meta")
         return StreamingChunk(
             name=chunk.get("name", ""),
             value=chunk.get("value", ""),
+            meta=meta if isinstance(meta, dict) else {},
         )
     if isinstance(chunk, str):
         return StreamingChunk(name="token", value=chunk)
     # Object fallback
+    meta = getattr(chunk, "meta", None)
     return StreamingChunk(
         name=getattr(chunk, "name", "token"),
         value=getattr(chunk, "value", str(chunk)),
+        meta=meta if isinstance(meta, dict) else {},
     )
 
 
