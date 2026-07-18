@@ -35,13 +35,25 @@ def deploy() -> List:
                         {"action": "a2aSetting", "label": "View A2A Setting"},
                     ],
                     "mutation": [
-                        {"action": "insertUpdateA2aAgent", "label": "Create/Update A2A Agent"},
+                        {
+                            "action": "insertUpdateA2aAgent",
+                            "label": "Create/Update A2A Agent",
+                        },
                         {"action": "deleteA2aAgent", "label": "Delete A2A Agent"},
-                        {"action": "insertUpdateA2aTask", "label": "Create/Update A2A Task"},
+                        {
+                            "action": "insertUpdateA2aTask",
+                            "label": "Create/Update A2A Task",
+                        },
                         {"action": "deleteA2aTask", "label": "Delete A2A Task"},
-                        {"action": "insertUpdateA2aMessage", "label": "Create/Update A2A Message"},
+                        {
+                            "action": "insertUpdateA2aMessage",
+                            "label": "Create/Update A2A Message",
+                        },
                         {"action": "deleteA2aMessage", "label": "Delete A2A Message"},
-                        {"action": "insertUpdateA2aSetting", "label": "Create/Update A2A Setting"},
+                        {
+                            "action": "insertUpdateA2aSetting",
+                            "label": "Create/Update A2A Setting",
+                        },
                         {"action": "deleteA2aSetting", "label": "Delete A2A Setting"},
                     ],
                     "type": "RequestResponse",
@@ -60,6 +72,19 @@ def deploy() -> List:
                     "is_graphql": False,
                     "settings": "beta_core_ai_agent",
                     "disabled_in_resources": True,
+                },
+                "agent_card": {
+                    "is_static": False,
+                    "label": "A2A Agent Card Discovery",
+                    "type": "RequestResponse",
+                    "support_methods": ["GET"],
+                    "is_auth_required": False,
+                    "is_graphql": False,
+                    "settings": "beta_core_ai_agent",
+                    "disabled_in_resources": True,
+                    "route_path": "/{endpoint_id}/.well-known/agent-card.json",
+                    "handler_type": "rest",
+                    "dispatch": "a2a_daemon_engine.main:dispatch_agent_card",
                 },
             },
         }
@@ -115,7 +140,18 @@ class A2ADaemonEngine(Graphql):
 
         try:
             from a2a.server.context import ServerCallContext
-            from a2a.types import CancelTaskRequest, GetTaskRequest, SendMessageRequest
+            from a2a.types import (
+                CancelTaskRequest,
+                DeleteTaskPushNotificationConfigRequest,
+                GetExtendedAgentCardRequest,
+                GetTaskPushNotificationConfigRequest,
+                GetTaskRequest,
+                ListTaskPushNotificationConfigsRequest,
+                ListTasksRequest,
+                SendMessageRequest,
+                SubscribeToTaskRequest,
+                TaskPushNotificationConfig,
+            )
 
             from .handlers.a2a_jsonrpc_bridge import (
                 build_jsonrpc_sdk_request,
@@ -184,6 +220,101 @@ class A2ADaemonEngine(Graphql):
                     request_handler.on_cancel_task(cancel_request, context)
                 )
                 result = jsonrpc_response_from_sdk(response, params.get("id"))
+            elif method == "tasks/list":
+                list_request = build_jsonrpc_sdk_request(ListTasksRequest, params)
+                response = self._run_async(
+                    request_handler.on_list_tasks(list_request, context)
+                )
+                result = jsonrpc_response_from_sdk(response, params.get("id"))
+            elif method in ("tasks/resubscribe", "tasks/subscribe"):
+                subscribe_request = build_jsonrpc_sdk_request(
+                    SubscribeToTaskRequest, params
+                )
+                events = self._run_async(
+                    self._collect_task_subscription(
+                        request_handler, subscribe_request, context
+                    )
+                )
+                result = {
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "status": "subscription_complete",
+                        "events_emitted": len(events),
+                        "events": events,
+                    },
+                    "id": params.get("id"),
+                }
+            elif method in (
+                "tasks/pushNotificationConfig/set",
+                "tasks/pushNotificationConfig/create",
+                "tasks/push-notification-config/create",
+                "tasks/pushNotification/set",
+            ):
+                create_request = build_jsonrpc_sdk_request(
+                    TaskPushNotificationConfig, params
+                )
+                response = self._run_async(
+                    request_handler.on_create_task_push_notification_config(
+                        create_request, context
+                    )
+                )
+                result = jsonrpc_response_from_sdk(response, params.get("id"))
+            elif method in (
+                "tasks/pushNotificationConfig/get",
+                "tasks/push-notification-config/get",
+                "tasks/pushNotification/get",
+            ):
+                get_push_request = build_jsonrpc_sdk_request(
+                    GetTaskPushNotificationConfigRequest, params
+                )
+                response = self._run_async(
+                    request_handler.on_get_task_push_notification_config(
+                        get_push_request, context
+                    )
+                )
+                result = jsonrpc_response_from_sdk(response, params.get("id"))
+            elif method in (
+                "tasks/pushNotificationConfig/list",
+                "tasks/push-notification-config/list",
+                "tasks/pushNotification/list",
+            ):
+                list_push_request = build_jsonrpc_sdk_request(
+                    ListTaskPushNotificationConfigsRequest, params
+                )
+                response = self._run_async(
+                    request_handler.on_list_task_push_notification_configs(
+                        list_push_request, context
+                    )
+                )
+                result = jsonrpc_response_from_sdk(response, params.get("id"))
+            elif method in (
+                "tasks/pushNotificationConfig/delete",
+                "tasks/push-notification-config/delete",
+                "tasks/pushNotification/delete",
+            ):
+                delete_push_request = build_jsonrpc_sdk_request(
+                    DeleteTaskPushNotificationConfigRequest, params
+                )
+                response = self._run_async(
+                    request_handler.on_delete_task_push_notification_config(
+                        delete_push_request, context
+                    )
+                )
+                result = jsonrpc_response_from_sdk(response, params.get("id"))
+            elif method in (
+                "agent/getAuthenticatedExtendedCard",
+                "agent/card/extended",
+                "agent/getExtendedCard",
+            ):
+                extended_request = build_jsonrpc_sdk_request(
+                    GetExtendedAgentCardRequest, params
+                )
+                response = self._run_async(
+                    request_handler.on_get_extended_agent_card(
+                        extended_request, context
+                    )
+                )
+                result = jsonrpc_response_from_sdk(response, params.get("id"))
             else:
                 result = jsonrpc_error_response(
                     -32601,
@@ -213,6 +344,86 @@ class A2ADaemonEngine(Graphql):
                     "id": params.get("id"),
                 }
             )
+
+    def agent_card(self, **params: Dict[str, Any]) -> Any:
+        """Gateway dispatch target for A2A Agent Card discovery."""
+        self._apply_partition_defaults(params)
+
+        if not Config.a2a_server or not Config.a2a_server.agent_card:
+            return {
+                "error": "A2A SDK not initialized",
+                "details": Config.a2a_server_error,
+            }
+
+        from .handlers.a2a_jsonrpc_bridge import sdk_response_to_dict
+
+        card = self._agent_card_for_request(params)
+        return sdk_response_to_dict(card)
+
+    def _agent_card_for_request(self, params: Dict[str, Any]) -> Any:
+        """Return a copy of the SDK card with the gateway endpoint URL."""
+        card = Config.a2a_server.agent_card
+        card_copy = type(card)()
+        card_copy.CopyFrom(card)
+
+        endpoint_url = self._gateway_endpoint_url(params)
+        if endpoint_url:
+            if card_copy.supported_interfaces:
+                for interface in card_copy.supported_interfaces:
+                    interface.url = endpoint_url
+            else:
+                from a2a.types import AgentInterface
+
+                card_copy.supported_interfaces.append(
+                    AgentInterface(
+                        url=endpoint_url,
+                        protocol_binding="JSONRPC",
+                        protocol_version="1.0.0",
+                    )
+                )
+        return card_copy
+
+    def _gateway_endpoint_url(self, params: Dict[str, Any]) -> str:
+        """Build the public gateway JSON-RPC endpoint URL for this request."""
+        context = (
+            params.get("context") if isinstance(params.get("context"), dict) else {}
+        )
+        endpoint_id = params.get("endpoint_id") or context.get("endpoint_id")
+
+        explicit_url = (
+            params.get("gateway_endpoint_url")
+            or params.get("a2a_endpoint_url")
+            or context.get("gateway_endpoint_url")
+            or context.get("a2a_endpoint_url")
+        )
+        if explicit_url:
+            return str(explicit_url).rstrip("/")
+
+        base_url = (
+            params.get("gateway_base_url")
+            or params.get("base_url")
+            or params.get("a2a_gateway_base_url")
+            or context.get("gateway_base_url")
+            or context.get("base_url")
+            or self.setting.get("gateway_base_url")
+            or self.setting.get("a2a_gateway_base_url")
+        )
+        if base_url and endpoint_id:
+            return f"{str(base_url).rstrip('/')}/{endpoint_id}/a2a"
+
+        request_url = params.get("request_url") or context.get("request_url")
+        if request_url:
+            url = str(request_url)
+            marker = "/.well-known/agent-card.json"
+            if url.endswith(marker):
+                return f"{url[: -len(marker)].rstrip('/')}/a2a"
+            return url.rstrip("/")
+
+        fallback = (
+            self.setting.get("a2a_server_url")
+            or f"http://localhost:{self.setting.get('port', 8001)}/"
+        )
+        return str(fallback).rstrip("/")
 
     def sse_message(self, **params: Dict[str, Any]) -> Any:
         """Process an A2A JSON-RPC message and push activity to SSE clients.
@@ -279,6 +490,20 @@ class A2ADaemonEngine(Graphql):
                 self.logger.warning(f"Failed to serialize stream event: {e}")
         return events
 
+    async def _collect_task_subscription(
+        self, request_handler: Any, request: Any, context: Any
+    ) -> List[Dict[str, Any]]:
+        """Drain SDK task subscription events for gateway request/response dispatch."""
+        from .handlers.a2a_jsonrpc_bridge import sdk_response_to_dict
+
+        events: List[Dict[str, Any]] = []
+        async for event in request_handler.on_subscribe_to_task(request, context):
+            try:
+                events.append(sdk_response_to_dict(event))
+            except Exception as e:  # pragma: no cover - defensive
+                self.logger.warning(f"Failed to serialize subscription event: {e}")
+        return events
+
     def _run_async(self, coro):
         """Run an async coroutine from a sync context."""
         import asyncio
@@ -331,6 +556,7 @@ class A2ADaemonEngine(Graphql):
 # Module-level dispatch functions for gateway integration
 # ---------------------------------------------------------------------------
 
+
 def _engine() -> A2ADaemonEngine:
     return A2ADaemonEngine(Config.get_logger(), **Config.get_setting())
 
@@ -338,6 +564,15 @@ def _engine() -> A2ADaemonEngine:
 def dispatch_graphql(**params: Dict[str, Any]) -> Any:
     """Gateway dispatch entry point for A2A Core GraphQL."""
     return _engine().a2a_core_graphql(**params)
+
+
+def dispatch_agent_card(**params: Dict[str, Any]) -> Any:
+    """Gateway dispatch entry point for A2A Agent Card discovery."""
+    try:
+        return _engine().agent_card(**params)
+    finally:
+        if Config.DB_BACKEND == "postgresql" and Config.db_session:
+            Config.db_session.remove()
 
 
 def dispatch_a2a(**params: Dict[str, Any]) -> Any:
