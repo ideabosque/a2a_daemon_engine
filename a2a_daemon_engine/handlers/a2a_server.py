@@ -22,7 +22,7 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
 from a2a.server.routes.common import DefaultServerCallContextBuilder
 from a2a.server.routes.jsonrpc_dispatcher import JsonRpcDispatcher
-from a2a.server.tasks import InMemoryTaskStore
+from a2a.server.tasks import InMemoryPushNotificationConfigStore, InMemoryTaskStore
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
@@ -40,6 +40,37 @@ __author__ = "SilvaEngine Team"
 
 # Note: Old A2ADaemonAgentExecutor class has been removed
 # Now using canonical A2ADaemonExecutor from a2a_executor.py
+
+
+class ValidatingPushNotificationConfigStore(InMemoryPushNotificationConfigStore):
+    """SDK push-config store with the daemon's webhook allowlist enforced."""
+
+    def __init__(
+        self,
+        logger: logging.Logger,
+        webhook_allowlist: list[str] | None = None,
+        require_https: bool = True,
+    ) -> None:
+        super().__init__()
+        from .a2a_pushconfig import WebhookUrlValidator
+
+        self.logger = logger
+        self.webhook_validator = WebhookUrlValidator(
+            allowlist=webhook_allowlist,
+            require_https=require_https,
+            logger=logger,
+        )
+
+    async def set_info(
+        self, task_id: str, notification_config: Any, context: Any
+    ) -> None:
+        if notification_config.url:
+            is_valid, error_msg = self.webhook_validator.validate(
+                notification_config.url
+            )
+            if not is_valid:
+                raise ValueError(f"Invalid webhook URL: {error_msg}")
+        await super().set_info(task_id, notification_config, context)
 
 
 class A2AServerCallContextBuilder(DefaultServerCallContextBuilder):
@@ -231,7 +262,7 @@ class A2AProtocolServer:
         Initialize A2A server with proper SDK components.
 
         Creates the complete A2A server stack:
-        1. AgentCard - Describes server capabilities (exposed at /.well-known/agent-card.json)
+        1. AgentCard - Describes server capabilities (exposed at the well-known path)
         2. TaskStore - Manages task state (InMemoryTaskStore)
         3. AgentExecutor - Executes tasks (A2ADaemonAgentExecutor)
         4. RequestHandler - Routes A2A RPC calls (DefaultRequestHandler)
@@ -241,7 +272,8 @@ class A2AProtocolServer:
         server_name = self.settings.get("a2a_server_name", "A2A Daemon Engine")
         server_description = self.settings.get(
             "a2a_server_description",
-            "Agent-to-Agent protocol daemon for distributed agent communication and multi-agent orchestration",
+            "Agent-to-Agent protocol daemon for distributed agent communication "
+            "and multi-agent orchestration",
         )
         server_url = self.settings.get(
             "a2a_server_url", f"http://localhost:{self.settings.get('port', 8001)}/"
@@ -311,11 +343,24 @@ class A2AProtocolServer:
             streaming_manager=self.streaming_manager,
         )
 
+        webhook_allowlist = self.settings.get("a2a_push_webhook_allowlist")
+        require_https = self.settings.get("a2a_push_require_https", True)
+        self.push_config_store = ValidatingPushNotificationConfigStore(
+            logger=self.logger,
+            webhook_allowlist=webhook_allowlist,
+            require_https=bool(require_https),
+        )
+
+        self.extended_agent_card = AgentCard()
+        self.extended_agent_card.CopyFrom(self.agent_card)
+
         # Create request handler - routes A2A RPC calls to executor.
         self.request_handler = DefaultRequestHandler(
             agent_executor=self.agent_executor,
             task_store=self.task_store,
             agent_card=self.agent_card,
+            push_config_store=self.push_config_store,
+            extended_agent_card=self.extended_agent_card,
         )
 
         # Build the SDK Starlette app:
@@ -370,7 +415,9 @@ class A2AProtocolServer:
         skill_definitions = {
             "task_execution": {
                 "name": "Task Execution",
-                "description": "Execute tasks assigned by other agents in the A2A network",
+                "description": (
+                    "Execute tasks assigned by other agents in the A2A network"
+                ),
                 "tags": ["task", "execution", "processing"],
                 "examples": [
                     "Execute data processing task",
@@ -380,7 +427,9 @@ class A2AProtocolServer:
             },
             "message_routing": {
                 "name": "Message Routing",
-                "description": "Route and deliver messages between agents in the network",
+                "description": (
+                    "Route and deliver messages between agents in the network"
+                ),
                 "tags": ["message", "routing", "communication"],
                 "examples": [
                     "Send message to agent-B",
@@ -390,7 +439,9 @@ class A2AProtocolServer:
             },
             "agent_discovery": {
                 "name": "Agent Discovery",
-                "description": "Discover, register, and manage agents in the A2A network",
+                "description": (
+                    "Discover, register, and manage agents in the A2A network"
+                ),
                 "tags": ["discovery", "registration", "network"],
                 "examples": [
                     "Find agents with capability X",
