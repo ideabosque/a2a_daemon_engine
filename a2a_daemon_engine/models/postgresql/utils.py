@@ -25,6 +25,15 @@ def initialize_tables(logger: logging.Logger, db_session: Any) -> None:
     Base.metadata.create_all(bind=engine, checkfirst=True)
     logger.info("PostgreSQL tables initialized (create_all with checkfirst=True).")
 
+    # Apply Row-Level Security policies on all partition-keyed tables.
+    try:
+        from ...utils.rls import create_rls_policies
+
+        create_rls_policies(engine)
+        logger.info("PostgreSQL RLS policies applied to partition-keyed tables.")
+    except Exception as e:
+        logger.warning(f"RLS policy creation skipped: {e}")
+
 
 def _import_all_models() -> None:
     """Import all PostgreSQL model modules to register them with Base.metadata."""
