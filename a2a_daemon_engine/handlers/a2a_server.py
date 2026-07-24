@@ -281,7 +281,12 @@ class A2AProtocolServer:
         server_version = self.settings.get("a2a_server_version", "1.0.0")
         capability_list = self.settings.get(
             "a2a_capabilities",
-            ["task_execution", "message_routing", "agent_discovery"],
+            [
+                "multi_agent_orchestration",
+                "agent_registry",
+                "conversational_ai",
+                "human_in_the_loop",
+            ],
         )
 
         # Create AgentSkills from capabilities
@@ -413,40 +418,65 @@ class A2AProtocolServer:
 
         # Skill definitions for common capabilities
         skill_definitions = {
-            "task_execution": {
-                "name": "Task Execution",
+            "multi_agent_orchestration": {
+                "name": "Multi-Agent Orchestration",
                 "description": (
-                    "Execute tasks assigned by other agents in the A2A network"
+                    "Coordinate task delegation and message routing across "
+                    "registered agents in the A2A network. Supports task "
+                    "assignment, inter-agent messaging, and streaming task "
+                    "execution with dual-path SSE + SDK emission."
                 ),
-                "tags": ["task", "execution", "processing"],
+                "tags": ["orchestration", "task", "routing", "delegation"],
                 "examples": [
-                    "Execute data processing task",
-                    "Run analysis on input data",
-                    "Process assigned task",
+                    "Delegate a task to a registered agent",
+                    "Route a message between agents",
+                    "Stream a long-running task with live updates",
+                    "Cancel a running task",
                 ],
             },
-            "message_routing": {
-                "name": "Message Routing",
+            "agent_registry": {
+                "name": "Agent Registry",
                 "description": (
-                    "Route and deliver messages between agents in the network"
+                    "Discover, register, and manage agents in the A2A network. "
+                    "Maintains agent records with per-agent handler metadata "
+                    "for data-driven routing to backends such as Hermes Agent "
+                    "or ai_agent_core_engine."
                 ),
-                "tags": ["message", "routing", "communication"],
+                "tags": ["discovery", "registration", "registry", "network"],
                 "examples": [
-                    "Send message to agent-B",
-                    "Route notification to task owner",
-                    "Deliver update to subscriber",
+                    "Register a new agent with its handler config",
+                    "List active agents in the network",
+                    "Look up an agent by UUID",
                 ],
             },
-            "agent_discovery": {
-                "name": "Agent Discovery",
+            "conversational_ai": {
+                "name": "Conversational AI",
                 "description": (
-                    "Discover, register, and manage agents in the A2A network"
+                    "Answer message/send requests with LLM-backed responses. "
+                    "Routes to the configured backend handler (Hermes Agent, "
+                    "ai_agent_core_engine, or in-process LLM) based on "
+                    "per-agent metadata."
                 ),
-                "tags": ["discovery", "registration", "network"],
+                "tags": ["conversation", "llm", "chat", "response"],
                 "examples": [
-                    "Find agents with capability X",
-                    "Register new agent",
-                    "List active agents",
+                    "Send a chat message and get an LLM response",
+                    "Ask a question to a registered agent",
+                    "Invoke a non-streaming SendMessage",
+                ],
+            },
+            "human_in_the_loop": {
+                "name": "Human-in-the-Loop",
+                "description": (
+                    "Stream tasks with INPUT_REQUIRED approval flows. "
+                    "Bridges Hermes Agent and ai_agent_core_engine approval "
+                    "events to A2A task state, and forwards user "
+                    "approve/reject decisions back to the running backend."
+                ),
+                "tags": ["approval", "hitl", "streaming", "input_required"],
+                "examples": [
+                    "Approve a tool call during a streaming task",
+                    "Reject a proposed action in a Hermes run",
+                    "Resolve a pending approval via SendMessage",
                 ],
             },
         }
