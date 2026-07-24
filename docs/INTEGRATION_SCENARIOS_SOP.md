@@ -12,9 +12,9 @@
 | Field | Value |
 |---|---|
 | SOP title | A2A Daemon Engine CI Integration SOP |
-| Version | 0.2.0 (draft — adds dual-backend + live report export) |
+| Version | 0.3.0 (draft — adds Hermes + Core Engine bridge scenarios + agent card skill rename) |
 | Owner / contact | SilvaEngine Team — `<confirm contact>` `assumed` |
-| Last updated | 2026-07-07 |
+| Last updated | 2026-07-18 |
 | Business domain | `generic` (A2A protocol daemon / multi-agent platform — not ecommerce/logistics/finance) |
 | Target environment | `dev` (local daemon at `http://localhost:8001`; local PostgreSQL at `localhost:5432`); `staging` optional `assumed` |
 | Approval status | `draft` |
@@ -44,6 +44,19 @@ workflow.
   - Removed-legacy-surface regression (`/rest/a2a-jsonrpc`, `/rest/a2a/{endpoint_id}/...` return 404/unavailable)
   - Dry-run task execution metadata shapes
   - Phase 10 `ai_agent_core_engine` bridge (when `Config.phase10_available`)
+  - **Phase 10 `HermesAgentHandler` bridge** — routes A2A tasks to a Hermes
+    Agent API Server instance via HTTP + SSE (`a2a_hermes_handler.py`);
+    per-agent metadata selects the handler
+  - **Phase 10 `CoreEngineAgentHandler` bridge** — routes A2A tasks to
+    `ai_agent_core_engine` via `silvaengine_gateway` using GraphQL
+    (non-streaming) and WebSocket (streaming) transports
+    (`a2a_core_engine_handler.py`)
+  - **Agent Card skill rename** — the public `/.well-known/agent-card.json`
+    now advertises four capability-style skills
+    (`multi_agent_orchestration`, `agent_registry`, `conversational_ai`,
+    `human_in_the_loop`) instead of internal operation names
+  - **Per-task external-run registry** in `A2ADaemonExecutor` for cancel and
+    approval passthrough to Hermes / Core Engine backends
   - **Live test report export** with per-call input arguments and output JSON (see Section 12)
 - **Out of scope:**
   - Unit tests in isolation (covered separately by `test_phase6/8/9/10.py` and `test_executor_unit.py`)
@@ -63,7 +76,7 @@ workflow.
 | Environment target | `dev` — local daemon started via `python a2a_daemon_engine/tests/start_daemon.py` |
 | Base URLs / endpoints | `http://localhost:8001` (SDK surface + `/rest`); serverless path tested in-process via `A2ADaemonEngine.a2a(**event)` |
 | Credential source | Project venv `c:\Python312\env\Scripts\activate.bat`; test secrets from `a2a_daemon_engine/tests/.env` (copied from `.env.example`) — **never inline secrets in SOP/scripts/reports** |
-| Required env vars (names only) | `region_name`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `endpoint_id`, `part_id`, `transport`, `port`, `jwt_secret_key`, `AUTH_PROVIDER`, `A2A_RUN_LIVE_API_TESTS`, `A2A_TEST_INITIALIZE_TABLES`, `A2A_AI_AGENT_MODULE`, `A2A_AI_AGENT_CLASS`, `A2A_DEFAULT_AGENT_UUID`, `A2A_STREAMING_ENABLED`, `A2A_STREAM_TIMEOUT`, `db_backend` (`dynamodb` \| `postgresql`), `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DB` (or `DATABASE_URL`) |
+| Required env vars (names only) | `region_name`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `endpoint_id`, `part_id`, `transport`, `port`, `jwt_secret_key`, `AUTH_PROVIDER`, `A2A_RUN_LIVE_API_TESTS`, `A2A_TEST_INITIALIZE_TABLES`, `A2A_AI_AGENT_MODULE`, `A2A_AI_AGENT_CLASS`, `A2A_DEFAULT_AGENT_UUID`, `A2A_STREAMING_ENABLED`, `A2A_STREAM_TIMEOUT`, `db_backend` (`dynamodb` \| `postgresql`), `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DB` (or `DATABASE_URL`), `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_MODEL`, `HERMES_STREAM_TIMEOUT`, `CORE_ENGINE_GRAPHQL_URL`, `CORE_ENGINE_WS_URL`, `CORE_ENGINE_TOKEN`, `CORE_ENGINE_AGENT_UUID`, `CORE_ENGINE_UPDATED_BY`, `CORE_ENGINE_STREAM_TIMEOUT` |
 | Data stores | **DynamoDB** (local Docker `amazon/dynamodb-local` on `:8000`, or AWS test tables; `pynamodb` models under `models/dynamodb`) **OR** **PostgreSQL** (local `localhost:5432` or remote; SQLAlchemy models under `models/postgresql`; Alembic migrations under `migration/`). Backend selected by `db_backend` in `tests/.env`. |
 | Messaging / events | In-process `EventQueue` / `SSEEventQueue` (no external message broker); SSE over HTTP |
 | Access constraints | None for dev (localhost); `FlexJWTMiddleware` gates `/rest/*` except `auth/token` and public protocol routes (`/`, `/v1`, `/.well-known/...`, `/tasks/{id}/stream`) |
@@ -89,6 +102,8 @@ before testing begins (`dependency.block_until_certified = true`).
 | Local JWT provider (`AUTH_PROVIDER=local`) | internal | `POST /rest/auth/token` returns HS256 token | operational | SilvaEngine |
 | Cognito provider (`AUTH_PROVIDER=cognito`) | external | JWKS fetch + RS256 verify on a test token | operational `assumed` | Cognito owner |
 | `ai_agent_core_engine` bridge (Phase 10) | external | `Config.phase10_available is True` | operational (only if scenarios require it) | `assumed` — confirm |
+| Hermes Agent API Server (Phase 10 Hermes bridge) | external | `GET /health` on `HERMES_API_URL` returns 200 with `Authorization: Bearer $HERMES_API_KEY` | operational (only if Hermes scenarios in scope) | `assumed` — confirm |
+| `silvaengine_gateway` (Phase 10 Core Engine bridge) | external | `GET /{ep}/ai_agent_core_graphql` reachable + `/{ep}/ai_agent_core_ws` WebSocket handshake succeeds with `CORE_ENGINE_TOKEN` | operational (only if Core Engine scenarios in scope) | `assumed` — confirm |
 | gRPC transport (`[grpc]` extra) | infra | `grpcio` importable + `A2A_TRANSPORT=grpc` | operational (only if gRPC scenarios in scope) | `assumed` — out of scope unless confirmed |
 | OpenTelemetry (`[telemetry]` extra) | infra | `OPENTELEMETRY_AVAILABLE` flag | configured (no-op acceptable) | SilvaEngine |
 
@@ -140,8 +155,12 @@ Foundation (env + venv + SDK + data store)
   -> Multi-Tenancy Isolation (composite PK + cross-tenant rejection)
   -> SSE Streaming (SendStreamingMessage + Last-Event-ID replay) [HTTP]
   -> Serverless Bridge (A2ADaemonEngine.a2a(**event) in-process)
-  -> Phase 10 LLM Bridge (only if phase10_available)
-  -> Failure & Resilience
+   -> Phase 10 LLM Bridge (only if phase10_available)
+        - INT-012: ai_agent_core_engine in-process bridge
+        - INT-014: Hermes Agent HTTP+SSE bridge
+        - INT-015: Core Engine gateway GraphQL/WebSocket bridge
+   -> Agent Card Skill Validation (renamed capability-style skills)
+   -> Failure & Resilience
   -> Data Reconciliation (persisted==returned, referential isolation, PK format)
   -> Live Report Export (per-call input/output — see Section 12)
   -> Certification
@@ -168,9 +187,9 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 | **Dependencies** | python_venv, a2a_sdk, dynamodb, a2a_daemon_engine |
 | **Test data** | none |
 | **Steps** | 1. Start `python a2a_daemon_engine/tests/start_daemon.py`. 2. `GET /rest/health`. 3. `GET /.well-known/agent-card.json`. |
-| **Expected behavior** | Daemon listens on `:8001`; health returns 200; agent card is valid v1 JSON with `protocolVersion`, `name`, `version`, `skills`. |
-| **Validation points** | daemon_listening, health_ok, agent_card_valid_v1 |
-| **Cross-system checks** | Agent card `protocolVersion` matches installed `a2a-sdk` major version |
+| **Expected behavior** | Daemon listens on `:8001`; health returns 200; agent card is valid v1 JSON with `protocolVersion`, `name`, `version`, `skills` containing the four capability-style skills: `multi-agent-orchestration`, `agent-registry`, `conversational-ai`, `human-in-the-loop`. |
+| **Validation points** | daemon_listening, health_ok, agent_card_valid_v1, agent_card_has_capability_skills |
+| **Cross-system checks** | Agent card `protocolVersion` matches installed `a2a-sdk` major version; skills advertise client-facing capabilities, not internal operation names |
 
 ### INT-002 — JSON-RPC compatibility endpoint (POST /)
 
@@ -376,6 +395,57 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 | **Validation points** | pg_crud_all_entities, task_terminal_completed_at, message_delivered_at, normalize_row_metadata_correct, cross_tenant_null, auto_id_uuid4, pk_composite_format |
 | **Cross-system checks** | PG `normalize_row` output keys == GraphQL type fields; task/message semantics == DynamoDB backend; `a2a_alembic_version` at `0004` |
 
+### INT-014 — Hermes Agent bridge (conditional)
+
+| Field | Value |
+|---|---|
+| **ID** | INT-014 |
+| **Name** | `HermesAgentHandler` routes A2A tasks to Hermes API Server via HTTP + SSE |
+| **Priority** | P2 (P1 if release depends on it) `assumed` |
+| **Type** | end-to-end |
+| **CI trigger** | pre-release |
+| **Preconditions** | Hermes API Server running at `HERMES_API_URL` with `HERMES_API_KEY`; `hermes-agent` registered in A2A agent registry with `metadata.module_name = a2a_daemon_engine.handlers.a2a_hermes_handler` and `metadata.class_name = HermesAgentHandler`; daemon started with `HERMES_*` env vars |
+| **Dependencies** | a2a_hermes_handler, a2a_ai_agent_utility, a2a_executor, Hermes API Server |
+| **Test data** | 1 registered Hermes agent; non-streaming `SendMessage` payload; streaming `SendStreamingMessage` payload with `stream: true`; cancel and approval payloads |
+| **Steps** | 1. `POST /v1` `SendMessage` with `metadata.agent_uuid=hermes-agent` → verify Hermes `/v1/chat/completions` called and response content returned. 2. `POST /v1` `SendStreamingMessage` → verify `run_id` chunk drained, token chunks emitted to SDK + SSE, `COMPLETED` state. 3. `POST /v1` `CancelTask` mid-stream → verify `POST /v1/runs/{id}/stop` called on Hermes, task → `CANCELED`. 4. Approval: Hermes emits `hermes.approval_required` → A2A `INPUT_REQUIRED`; client sends `operation=approval_response` → verify `POST /v1/runs/{id}/approval` called. |
+| **Expected behavior** | Non-streaming returns Hermes-generated text; streaming emits token chunks with correct `run_id` registry; cancel passthrough hits Hermes stop endpoint; approval passthrough hits Hermes approval endpoint; per-task registry cleared on terminal state. |
+| **Validation points** | hermes_non_streaming_ok, hermes_streaming_tokens, hermes_run_id_registered, hermes_cancel_passthrough, hermes_approval_passthrough, hermes_registry_cleared |
+| **Cross-system checks** | Hermes API Server request logs show daemon-originated calls; A2A task state transitions match Hermes run lifecycle |
+
+### INT-015 — Core Engine gateway bridge (conditional)
+
+| Field | Value |
+|---|---|
+| **ID** | INT-015 |
+| **Name** | `CoreEngineAgentHandler` routes A2A tasks to `ai_agent_core_engine` via `silvaengine_gateway` (GraphQL + WebSocket) |
+| **Priority** | P2 (P1 if release depends on it) `assumed` |
+| **Type** | end-to-end |
+| **CI trigger** | pre-release |
+| **Preconditions** | `silvaengine_gateway` running at `CORE_ENGINE_GRAPHQL_URL` / `CORE_ENGINE_WS_URL` with valid `CORE_ENGINE_TOKEN`; `core-engine-agent` registered in A2A agent registry with `metadata.module_name = a2a_daemon_engine.handlers.a2a_core_engine_handler` and `metadata.class_name = CoreEngineAgentHandler`; `ai_agent_core_engine` reachable through the gateway; daemon started with `CORE_ENGINE_*` env vars |
+| **Dependencies** | a2a_core_engine_handler, a2a_ai_agent_utility, a2a_executor, silvaengine_gateway, ai_agent_core_engine |
+| **Test data** | 1 registered Core Engine agent; non-streaming `SendMessage` payload; streaming `SendStreamingMessage` payload with `stream: true`; cancel payload |
+| **Steps** | 1. `POST /v1` `SendMessage` with `metadata.agent_uuid=core-engine-agent` → verify gateway GraphQL `ask_model` + `execute_ask_model` + `message_list` 3-step flow returns assistant content. 2. `POST /v1` `SendStreamingMessage` → verify WebSocket `chunk_delta` frames drained as `token` chunks to SDK + SSE, `is_message_end` → `COMPLETED`. 3. `POST /v1` `CancelTask` mid-stream → verify WebSocket closed, task → `CANCELED`. |
+| **Expected behavior** | Non-streaming returns assistant message from Core Engine via gateway GraphQL; streaming emits token chunks from `chunk_delta` frames; cancel closes WebSocket and unblocks drain loop; per-task registry cleared on terminal state. |
+| **Validation points** | core_engine_gql_3step_ok, core_engine_ws_streaming_tokens, core_engine_ws_is_message_end, core_engine_cancel_closes_ws, core_engine_registry_cleared |
+| **Cross-system checks** | Gateway request logs show GraphQL mutations + WebSocket `ask_model` actions; `ai_agent_core_engine` message store has persisted assistant message |
+
+### INT-016 — Agent Card capability skills validation
+
+| Field | Value |
+|---|---|
+| **ID** | INT-016 |
+| **Name** | Agent card advertises capability-style skills, not internal operation names |
+| **Priority** | P1 |
+| **Type** | API |
+| **CI trigger** | on pull request |
+| **Preconditions** | INT-001 passed |
+| **Dependencies** | a2a_server |
+| **Test data** | none |
+| **Steps** | 1. `GET /.well-known/agent-card.json`. 2. Parse `skills` array. 3. Verify exactly 4 skills with ids: `multi-agent-orchestration`, `agent-registry`, `conversational-ai`, `human-in-the-loop`. 4. Verify each skill has `name`, `description`, `tags`, `examples`. 5. Verify no skill id matches an internal operation name (`task_execution`, `message_routing`, `message_response`, `agent_discovery`). |
+| **Expected behavior** | Card advertises 4 capability-style skills describing client-facing capabilities; internal operation names are not leaked as skill ids. |
+| **Validation points** | skills_count_is_4, skill_ids_are_capabilities, no_internal_operation_names, skills_have_required_fields |
+| **Cross-system checks** | Skills describe what the daemon does for clients, not how it routes internally |
+
 ## 8. Failure and Resilience Scenarios
 
 | Scenario | Injected fault | Expected behavior |
@@ -389,6 +459,13 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 | `service_outages` | Daemon restart mid-stream | `Last-Event-ID` replay recovers; clients reconnect |
 | `third_party_outages` | Cognito JWKS endpoint unreachable (when `AUTH_PROVIDER=cognito`) | Degrade gracefully; clear error; local provider unaffected |
 | `bridge_rejection` | Non-JSON-RPC payload to `a2a(**event)` | Rejected with JSON-RPC error; no silent dispatch |
+| `hermes_server_down` | Hermes API Server unreachable during `HermesAgentHandler.ask_model` | Task → `FAILED` with connection error; no hanging stream; registry cleared |
+| `hermes_auth_failure` | Wrong `HERMES_API_KEY` (401 from Hermes) | Task → `FAILED` with auth error; no hanging stream |
+| `hermes_stream_timeout` | Hermes SSE stream never sends `response.completed` | Drain loop timeout (`HERMES_STREAM_TIMEOUT`); task → `FAILED`; `stream_event` set; registry cleared |
+| `core_engine_gw_down` | `silvaengine_gateway` unreachable during `CoreEngineAgentHandler.ask_model` | Task → `FAILED` with connection error; no hanging stream; registry cleared |
+| `core_engine_ws_error_frame` | Gateway WebSocket sends `{"type":"error"}` mid-stream | Error chunk emitted; task → `FAILED`; WebSocket closed; registry cleared |
+| `core_engine_no_assistant_msg` | GraphQL `message_list` returns no assistant message after `execute_ask_model` | Task → `FAILED` with "No assistant message found" error |
+| `cancel_after_terminal` | `CancelTask` sent after task already `COMPLETED` | No Hermes stop call / no WebSocket close; response reports task already terminal |
 
 ## 9. Data Reconciliation Checks
 
@@ -414,7 +491,8 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 - `silvaengine_utility.JSON` import resolved (import from `silvaengine_utility.graphql`, not top-level).
 
 **Exit criteria (certification may be issued when):**
-- All P1 scenarios (INT-001..008, INT-010) pass; INT-012 passes if in scope;
+- All P1 scenarios (INT-001..008, INT-010, INT-016) pass; INT-012 passes if in scope;
+  INT-014 passes if Hermes bridge in scope; INT-015 passes if Core Engine bridge in scope;
   **INT-013 passes when `db_backend=postgresql`**.
 - ≥ 90% of P2 scenarios pass.
 - Coverage ≥ 80% (`testing_plan.minimum_coverage_threshold`).
@@ -428,9 +506,9 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 
 | Trigger | Scope run | Required to pass |
 |---|---|---|
-| On pull request | INT-001, INT-002, INT-003, INT-005, INT-008 (local), INT-010, INT-011; **INT-013 (PG) when `db_backend=postgresql`** | yes — blocks merge |
+| On pull request | INT-001, INT-002, INT-003, INT-005, INT-008 (local), INT-010, INT-011, INT-016; **INT-013 (PG) when `db_backend=postgresql`** | yes — blocks merge |
 | Nightly | All P1 + P2 (INT-004, INT-006, INT-007, INT-009, INT-013) + resilience subset + **live report export** | report only |
-| Pre-release | Full suite + failure/resilience (Section 8) + reconciliation (Section 9) + Cognito (if configured) + Phase 10 (if available) + **both backends (dynamodb + postgresql)** + **dated live report with per-call input/output** | yes — blocks release |
+| Pre-release | Full suite + failure/resilience (Section 8) + reconciliation (Section 9) + Cognito (if configured) + Phase 10 (if available) + **Hermes bridge (INT-014, if `HERMES_API_URL` set)** + **Core Engine bridge (INT-015, if `CORE_ENGINE_GRAPHQL_URL` set)** + **both backends (dynamodb + postgresql)** + **dated live report with per-call input/output** | yes — blocks release |
 
 ## 12. Reporting and Certification Expectations
 
@@ -506,19 +584,34 @@ in the PG initiation run are marked `verified`.
 3. **Phase 10 LLM bridge in scope?** INT-012 priority P2 — promote to P1 if
    the release depends on it. Requires `ai_agent_core_engine` importable +
    `A2A_AI_AGENT_MODULE`/`A2A_AI_AGENT_CLASS` env vars.
-4. **gRPC transport out of scope** unless `[grpc]` extra installed and
+4. **Hermes Agent bridge in scope?** INT-014 priority P2 — promote to P1 if
+   the release depends on it. Requires Hermes API Server running at
+   `HERMES_API_URL` with `HERMES_API_KEY` set, and a `hermes-agent` record
+   registered in the A2A agent registry with
+   `metadata.module_name = a2a_daemon_engine.handlers.a2a_hermes_handler`.
+5. **Core Engine gateway bridge in scope?** INT-015 priority P2 — promote to
+   P1 if the release depends on it. Requires `silvaengine_gateway` running
+   with `CORE_ENGINE_GRAPHQL_URL` / `CORE_ENGINE_WS_URL` / `CORE_ENGINE_TOKEN`
+   set, `ai_agent_core_engine` reachable through the gateway, and a
+   `core-engine-agent` record registered in the A2A agent registry with
+   `metadata.module_name = a2a_daemon_engine.handlers.a2a_core_engine_handler`.
+6. **gRPC transport out of scope** unless `[grpc]` extra installed and
    `A2A_TRANSPORT=grpc` confirmed.
-5. **DynamoDB source** — local Docker (`amazon/dynamodb-local:8000`) vs AWS
+7. **DynamoDB source** — local Docker (`amazon/dynamodb-local:8000`) vs AWS
    test tables? Determines whether table provisioning is auto or manual-approval.
-6. **`silvaengine_utility.JSON` import** — `verified` resolved in-module
+8. **`silvaengine_utility.JSON` import** — `verified` resolved in-module
    (import from `silvaengine_utility.graphql`). The sibling checkout is not
    modified.
-7. **PostgreSQL backend** — `verified` initiated: Alembic migrated to `0004`,
+9. **PostgreSQL backend** — `verified` initiated: Alembic migrated to `0004`,
    4 tables provisioned, `Config._initialize_db_session` works, 13/13 PG
    integration tests pass, `normalize_row` metadata fix applied.
-8. **Owner / contact / distribution** fields — confirm names and emails.
-9. **Dual-backend pre-release gate** — confirm that pre-release must run both
-   `db_backend=dynamodb` and `db_backend=postgresql` (currently `assumed` yes).
+10. **Owner / contact / distribution** fields — confirm names and emails.
+11. **Dual-backend pre-release gate** — confirm that pre-release must run both
+    `db_backend=dynamodb` and `db_backend=postgresql` (currently `assumed` yes).
+12. **Agent card skill rename** — `verified`: the card now advertises four
+    capability-style skills (`multi_agent_orchestration`, `agent_registry`,
+    `conversational_ai`, `human_in_the_loop`) instead of internal operation
+    names. INT-016 validates this on every PR.
 
 Once you confirm or correct these items, the SOP moves from `draft` to
 `approved` and full (non-subset) Phase 8+ test execution may proceed.
