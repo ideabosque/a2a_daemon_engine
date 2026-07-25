@@ -310,13 +310,18 @@ class A2ADaemonExecutor(AgentExecutor):
 
         Phase 10: When ai_agent_core_engine is available and configured,
         invokes the LLM handler for a real response.
+
+        Note: ai_agent_core_engine is NOT required — the bridge resolves the
+        handler dynamically (per-agent metadata or A2A_AI_AGENT_MODULE/CLASS
+        env vars), so the Hermes bridge (HermesAgentHandler) works without the
+        core engine installed. The only requirement is a configured a2a_core
+        (DynamoDB or PostgreSQL) for task/message persistence.
         """
         from .a2a_ai_agent_utility import (
-            AI_CORE_AVAILABLE,
             execute_ai_agent_non_streaming,
         )
 
-        if AI_CORE_AVAILABLE and self.config and getattr(self.config, "a2a_core", None):
+        if self.config and getattr(self.config, "a2a_core", None):
             agent_uuid = _context_get_any(
                 request_context,
                 "agent_uuid",
@@ -470,14 +475,17 @@ class A2ADaemonExecutor(AgentExecutor):
             )
             return
 
-        # Phase 10: attempt ai_agent_core_engine bridge when available
+        # Phase 10: attempt the LLM handler bridge. ai_agent_core_engine is
+        # NOT required — the handler is resolved dynamically (per-agent metadata
+        # or A2A_AI_AGENT_MODULE/CLASS env vars), so the Hermes bridge works
+        # without the core engine. a2a_core (DynamoDB or PostgreSQL) is the
+        # only requirement, for task/message persistence.
         from .a2a_ai_agent_utility import (
-            AI_CORE_AVAILABLE,
             execute_ai_agent_non_streaming,
             execute_ai_agent_streaming,
         )
 
-        if AI_CORE_AVAILABLE and self.config and getattr(self.config, "a2a_core", None):
+        if self.config and getattr(self.config, "a2a_core", None):
             agent_uuid = _context_get_any(
                 request_context,
                 "agent_uuid",
