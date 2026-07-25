@@ -6,6 +6,7 @@ __author__ = "bibow"
 
 import json
 import logging
+from datetime import datetime
 from typing import Any, Dict, List
 
 from graphene import Schema
@@ -13,6 +14,33 @@ from silvaengine_utility import Graphql, Invoker
 
 from .handlers.config import Config
 from .schema import Mutations, Query, type_class
+
+
+def _json_default(obj: Any) -> Any:
+    """JSON default handler for non-stdlib types the A2A SDK can emit.
+
+    The SDK ``model_dump(mode="json")`` generally yields JSON-native types, but
+    some fields (e.g. pendulum ``DateTime`` from task timestamps / history)
+    survive as datetime objects, and ``json.dumps`` then raises
+    ``Object of type DateTime is not JSON serializable``. Coerce datetimes to
+    ISO 8601 strings so the JSON-RPC response always serializes.
+    """
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    # pendulum.DateTime subclasses datetime, so the above covers it; keep a
+    # generic fallback for any other object exposing isoformat().
+    if hasattr(obj, "isoformat"):
+        return obj.isoformat()
+    if hasattr(obj, "model_dump"):
+        return obj.model_dump(mode="json")
+    if hasattr(obj, "dict"):
+        return obj.dict()
+    return str(obj)
+
+
+def _dumps(result: Any) -> str:
+    """json.dumps with the datetime-aware default handler."""
+    return json.dumps(result, default=_json_default)
 
 
 def deploy() -> List:
@@ -127,7 +155,7 @@ class A2ADaemonEngine(Graphql):
             raise ValueError("A2A protocol calls must use JSON-RPC 2.0 format")
 
         if not Config.a2a_server:
-            return json.dumps(
+            return _dumps(
                 {
                     "jsonrpc": "2.0",
                     "error": {"code": -32603, "message": "A2A SDK not initialized"},
@@ -322,10 +350,10 @@ class A2ADaemonEngine(Graphql):
                     params.get("id"),
                 )
 
-            return json.dumps(result)
+            return _dumps(result)
 
         except ImportError as e:
-            return json.dumps(
+            return _dumps(
                 {
                     "jsonrpc": "2.0",
                     "error": {
@@ -337,7 +365,7 @@ class A2ADaemonEngine(Graphql):
             )
         except Exception as e:
             self.logger.error(f"Error handling JSON-RPC: {e}", exc_info=True)
-            return json.dumps(
+            return _dumps(
                 {
                     "jsonrpc": "2.0",
                     "error": {"code": -32603, "message": str(e)},
