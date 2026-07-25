@@ -321,7 +321,17 @@ async def get_a2a_task(partition_key: str, task_id: str) -> dict[str, Any]:
         partition_key=partition_key, query=query, variables=variables
     )
 
-    data = Serializer.json_loads(result.get("body", result))
+    # The GraphQL wrapper may return an API-Gateway-style envelope
+    # {"statusCode":..., "body": "<json string>"} or a plain dict already
+    # parsed. Handle both so json_loads isn't fed a dict.
+    raw = result.get("body", result) if isinstance(result, dict) else result
+    if isinstance(raw, (dict, list)):
+        data = raw
+    else:
+        data = Serializer.json_loads(raw)
+
+    if not isinstance(data, dict):
+        return None
 
     if "errors" in data:
         return None
@@ -337,8 +347,8 @@ async def get_a2a_task(partition_key: str, task_id: str) -> dict[str, Any]:
         "task_type": task.get("taskType"),
         "assigned_agent_id": task.get("assignedAgentId"),
         "priority": task.get("priority"),
-        "input_data": json.loads(task.get("inputData", "{}")),
-        "output_data": json.loads(task.get("outputData", "{}")),
+        "input_data": json.loads(task.get("inputData", "{}") or "{}"),
+        "output_data": json.loads(task.get("outputData", "{}") or "{}"),
         "created_at": task.get("createdAt"),
         "updated_at": task.get("updatedAt"),
         "completed_at": task.get("completedAt"),
