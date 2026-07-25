@@ -292,10 +292,13 @@ class DynamoDBA2ATaskStore(TaskStore):
             "CANCELED": _task_state("CANCELED"),
             "CANCELLED": _task_state("CANCELED"),
             "REJECTED": _task_state("REJECTED"),
-            "UNKNOWN": _task_state("UNKNOWN"),
         }
 
-        return status_map.get(status_str.upper(), _task_state("UNKNOWN"))
+        # Fall back to SUBMITTED for any unrecognized status rather than
+        # _task_state("UNKNOWN") — the A2A SDK TaskState enum has no UNKNOWN
+        # member, so the former default raised AttributeError and made the
+        # whole get() return None (tasks/get -> "Task not found").
+        return status_map.get(status_str.upper(), _task_state("SUBMITTED"))
 
     def _dict_to_task(self, task_dict: dict[str, Any]) -> Task:
         """
