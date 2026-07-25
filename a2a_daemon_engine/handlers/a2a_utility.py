@@ -340,15 +340,29 @@ async def get_a2a_task(partition_key: str, task_id: str) -> dict[str, Any]:
     if not task:
         return None
 
-    # Normalize the response
+    # Normalize the response. inputData/outputData may arrive as already-
+    # parsed dicts (the JSON scalar returns objects) or as JSON strings
+    # (older envelope); coerce both.
+    def _as_dict(v):
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, (str, bytes)) and v:
+            try:
+                import json as _j
+                parsed = _j.loads(v)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
     return {
         "id": task.get("taskId"),
         "status": task.get("status"),
         "task_type": task.get("taskType"),
         "assigned_agent_id": task.get("assignedAgentId"),
         "priority": task.get("priority"),
-        "input_data": json.loads(task.get("inputData", "{}") or "{}"),
-        "output_data": json.loads(task.get("outputData", "{}") or "{}"),
+        "input_data": _as_dict(task.get("inputData")),
+        "output_data": _as_dict(task.get("outputData")),
         "created_at": task.get("createdAt"),
         "updated_at": task.get("updatedAt"),
         "completed_at": task.get("completedAt"),
