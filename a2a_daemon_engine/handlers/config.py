@@ -306,14 +306,19 @@ class Config:
     def _initialize_a2a_core(
         cls, logger: logging.Logger, setting: Dict[str, Any]
     ) -> None:
-        if all(
-            setting.get(k)
-            for k in ["region_name", "aws_access_key_id", "aws_secret_access_key"]
-        ):
+        # A2ACore supports both DynamoDB and PostgreSQL backends. DynamoDB is
+        # only configured when AWS credentials are present; the PostgreSQL path
+        # uses Config.db_session (initialized in _initialize_db_session above)
+        # and needs no AWS credentials. Instantiate A2ACore unconditionally so
+        # a PostgreSQL-only / no-AWS deployment still has a working a2a_core.
+        try:
             from .a2a_core import A2ACore
 
             cls.a2a_core = A2ACore(logger, **setting)
-            logger.info("A2A Core initialized successfully.")
+            backend = "PostgreSQL" if cls.DB_BACKEND == "postgresql" else "DynamoDB"
+            logger.info(f"A2A Core initialized ({backend} backend).")
+        except Exception as e:
+            logger.warning(f"A2A Core initialization failed: {e}", exc_info=True)
 
     @classmethod
     def _initialize_a2a_server(
@@ -351,6 +356,18 @@ class Config:
     def _initialize_aws_services(
         cls, logger: logging.Logger, setting: Dict[str, Any]
     ) -> None:
+        # AWS services are OPTIONAL: when no region (or no credentials) are
+        # configured — e.g. a PostgreSQL-only deployment with no AWS — skip
+        # client creation entirely instead of raising NoRegionError, which
+        # would otherwise abort the whole Config.initialize() and leave
+        # a2a_core / a2a_server uninitialised.
+        region = setting.get("region_name")
+        if not region:
+            logger.info(
+                "AWS services skipped: no region_name configured "
+                "(PostgreSQL-only / no-AWS deployment)."
+            )
+            return
         try:
             if all(
                 setting.get(k)
@@ -362,7 +379,7 @@ class Config:
                     "aws_secret_access_key": setting["aws_secret_access_key"],
                 }
             else:
-                aws_credentials = {}
+                aws_credentials = {"region_name": region}
 
             cls.aws_s3 = boto3.client(
                 "s3",
