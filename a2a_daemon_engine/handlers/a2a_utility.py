@@ -529,21 +529,28 @@ async def query_a2a_task(
         List of task data dictionaries
     """
 
+    # NOTE: a2a_task_list takes NO partitionKey argument — the resolver reads
+    # the partition from info.context["partition_key"], which a2a_core_graphql
+    # sets from the partition_key kwarg below. Passing partitionKey as an
+    # argument fails validation ("Unknown argument 'partitionKey' on field
+    # 'Query.a2aTaskList'"), and the error is swallowed, returning []. The
+    # list field is a2a_task_list (graphene snake_case -> a2aTaskList alias is
+    # NOT exposed here) and the count field is total (not totalCount).
     query = """
         query ListA2aTasks(
-            $partitionKey: String!,
             $status: String,
             $priority: String,
             $taskType: String,
             $assignedAgentId: String,
+            $pageNumber: Int,
             $limit: Int
         ) {
             a2aTaskList(
-                partitionKey: $partitionKey,
                 status: $status,
                 priority: $priority,
                 taskType: $taskType,
                 assignedAgentId: $assignedAgentId,
+                pageNumber: $pageNumber,
                 limit: $limit
             ) {
                 a2aTaskList {
@@ -557,7 +564,7 @@ async def query_a2a_task(
                     createdAt
                     updatedAt
                 }
-                totalCount
+                total
             }
         }
     """
@@ -565,7 +572,6 @@ async def query_a2a_task(
     filter_dict = filter_dict or {}
 
     variables = {
-        "partitionKey": partition_key,
         "limit": limit,
     }
 
@@ -583,12 +589,28 @@ async def query_a2a_task(
         partition_key=partition_key, query=query, variables=variables
     )
 
-    data = Serializer.json_loads(result.get("body", result))
+    raw = result.get("body", result) if isinstance(result, dict) else result
+    if isinstance(raw, (dict, list)):
+        data = raw
+    else:
+        data = Serializer.json_loads(raw)
 
-    if "errors" in data:
+    if not isinstance(data, dict) or "errors" in data:
         return []
 
-    task_list = data.get("data", {}).get("a2aTaskList", {}).get("a2aTaskList", [])
+    task_list = data.get("data", {}).get("a2aTaskList", {}).get("a2aTaskList", []) or []
+
+    def _as_dict(v):
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, (str, bytes)) and v:
+            try:
+                import json as _j
+                parsed = _j.loads(v)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+        return {}
 
     # Normalize the response
     return [
@@ -598,8 +620,8 @@ async def query_a2a_task(
             "task_type": task.get("taskType"),
             "assigned_agent_id": task.get("assignedAgentId"),
             "priority": task.get("priority"),
-            "input_data": json.loads(task.get("inputData", "{}")),
-            "output_data": json.loads(task.get("outputData", "{}")),
+            "input_data": _as_dict(task.get("inputData")),
+            "output_data": _as_dict(task.get("outputData")),
             "created_at": task.get("createdAt"),
             "updated_at": task.get("updatedAt"),
         }
