@@ -128,6 +128,27 @@ class DynamoDBA2ATaskStore(TaskStore):
             self._event_cache.move_to_end(task_id)
         return buffer
 
+    def _partition_key(self, context: ServerCallContext | None) -> str:
+        """Resolve the per-request partition key from the call context.
+
+        The store is initialized once with a default partition_key (from
+        gateway settings), but the SDK calls get/save/delete/list per request
+        with a ``ServerCallContext`` whose ``state["partition_key"]`` carries
+        the assembled ``{endpoint_id}#{part_id}`` for THIS request. Using the
+        per-request key is what makes ``tasks/get`` find a task that
+        ``message/send`` persisted under the caller's tenant partition; without
+        it, the store queries the default partition and returns "not found".
+        Falls back to ``self.partition_key`` when the context is absent or
+        carries no partition_key (standalone / unpartitioned runs).
+        """
+        if context is not None:
+            state = getattr(context, "state", None)
+            if isinstance(state, dict):
+                pk = state.get("partition_key")
+                if pk:
+                    return str(pk)
+        return self.partition_key
+
     # =============================================================================
     # CANONICAL A2A SDK TASKSTORE INTERFACE
     # =============================================================================
@@ -142,17 +163,19 @@ class DynamoDBA2ATaskStore(TaskStore):
 
         Args:
             task_id: Unique task identifier
-            context: Optional server call context (for future extensibility)
+            context: Optional server call context (carries the per-request
+                partition_key in state["partition_key"])
 
         Returns:
             Task object if found, None otherwise
         """
         from .a2a_utility import get_a2a_task
 
+        partition_key = self._partition_key(context)
         try:
             # Get task data from DynamoDB via GraphQL wrapper
             task_dict = await get_a2a_task(
-                partition_key=self.partition_key, task_id=task_id
+                partition_key=partition_key, task_id=task_id
             )
 
             if not task_dict:
@@ -176,11 +199,13 @@ class DynamoDBA2ATaskStore(TaskStore):
 
         Args:
             task: Task object to save
-            context: Optional server call context (for future extensibility)
+            context: Optional server call context (carries the per-request
+                partition_key in state["partition_key"])
         """
         from .a2a_utility import get_a2a_task, insert_a2a_task, update_a2a_task
 
         task_id = task.id if hasattr(task, "id") else str(task)
+        partition_key = self._partition_key(context)
 
         self.logger.info(f"Saving task {task_id} to DynamoDB")
 
@@ -190,20 +215,20 @@ class DynamoDBA2ATaskStore(TaskStore):
 
             # Check if task exists
             existing = await get_a2a_task(
-                partition_key=self.partition_key, task_id=task_id
+                partition_key=partition_key, task_id=task_id
             )
 
             if existing:
                 # Update existing task
                 await update_a2a_task(
-                    partition_key=self.partition_key,
+                    partition_key=partition_key,
                     task_id=task_id,
                     task_data=task_dict,
                 )
             else:
                 # Create new task
                 await insert_a2a_task(
-                    partition_key=self.partition_key, task_data=task_dict
+                    partition_key=partition_key, task_data=task_dict
                 )
 
                 # Initialize bounded event cache for new task
@@ -223,14 +248,16 @@ class DynamoDBA2ATaskStore(TaskStore):
 
         Args:
             task_id: Task identifier to delete
-            context: Optional server call context (for future extensibility)
+            context: Optional server call context (carries the per-request
+                partition_key in state["partition_key"])
         """
         from .a2a_utility import delete_a2a_task
 
+        partition_key = self._partition_key(context)
         self.logger.info(f"Deleting task {task_id} from DynamoDB")
 
         try:
-            await delete_a2a_task(partition_key=self.partition_key, task_id=task_id)
+            await delete_a2a_task(partition_key=partition_key, task_id=task_id)
 
             # Clean up event cache
             self._event_cache.pop(task_id, None)
@@ -426,6 +453,7 @@ class DynamoDBA2ATaskStore(TaskStore):
                 context_id=context_id,
                 page_size=page_size,
                 page_token=page_token,
+                partition_key=self._partition_key(context),
             )
 
             tasks = []
@@ -452,6 +480,7 @@ class DynamoDBA2ATaskStore(TaskStore):
         context_id: str | None = None,
         page_size: int = 20,
         page_token: str | None = None,
+        partition_key: str | None = None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """
         List tasks from DynamoDB with cursor pagination (A2A v1.0 compliant).
@@ -463,8 +492,10 @@ class DynamoDBA2ATaskStore(TaskStore):
             task_ids: Optional list of task IDs to filter by
             session_id: Optional session ID filter
             context_id: Optional context ID filter
-            page_size: Maximum number of tasks to return per page
+            page_size: Maximum number of tasks per page
             page_token: Opaque cursor for pagination
+            partition_key: Per-request partition key (defaults to the store's
+                init partition_key when not supplied)
 
         Returns:
             Tuple of (list of task data dictionaries, next_page_token)
@@ -473,6 +504,8 @@ class DynamoDBA2ATaskStore(TaskStore):
         import json
 
         from .a2a_utility import query_a2a_task
+
+        pk = partition_key or self.partition_key
 
         try:
             # Decode page_token to get the next list offset.
@@ -497,7 +530,7 @@ class DynamoDBA2ATaskStore(TaskStore):
             # Query enough rows to provide offset-based pagination over the
             # current GraphQL wrapper, which does not expose DynamoDB LastKey.
             tasks = await query_a2a_task(
-                partition_key=self.partition_key,
+                partition_key=pk,
                 filter_dict=filter_dict,
                 limit=offset + page_size + 1,
             )
