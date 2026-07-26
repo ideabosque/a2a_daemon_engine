@@ -156,6 +156,32 @@ async def resolve_agent(
             hermes_metadata["hermes_model"] = Config.hermes_model
         if getattr(Config, "hermes_stream_timeout", None):
             hermes_metadata["hermes_timeout"] = Config.hermes_stream_timeout
+        openclaw_metadata: dict[str, Any] = {}
+        if getattr(Config, "openclaw_api_url", None):
+            openclaw_metadata["openclaw_api_url"] = Config.openclaw_api_url
+        if getattr(Config, "openclaw_api_key", None):
+            openclaw_metadata["openclaw_api_key"] = Config.openclaw_api_key
+        if getattr(Config, "openclaw_agent_id", None):
+            openclaw_metadata["openclaw_agent_id"] = Config.openclaw_agent_id
+        if getattr(Config, "openclaw_agent_selector", None):
+            openclaw_metadata["openclaw_agent_selector"] = Config.openclaw_agent_selector
+        if getattr(Config, "openclaw_stream_timeout", None):
+            openclaw_metadata["openclaw_timeout"] = Config.openclaw_stream_timeout
+        # Merge openclaw_* into the metadata so the handler picks it up.
+        hermes_metadata.update(openclaw_metadata)
+        openclaw_metadata: dict[str, Any] = {}
+        if getattr(Config, "openclaw_api_url", None):
+            openclaw_metadata["openclaw_api_url"] = Config.openclaw_api_url
+        if getattr(Config, "openclaw_api_key", None):
+            openclaw_metadata["openclaw_api_key"] = Config.openclaw_api_key
+        if getattr(Config, "openclaw_agent_id", None):
+            openclaw_metadata["openclaw_agent_id"] = Config.openclaw_agent_id
+        if getattr(Config, "openclaw_agent_selector", None):
+            openclaw_metadata["openclaw_agent_selector"] = Config.openclaw_agent_selector
+        if getattr(Config, "openclaw_stream_timeout", None):
+            openclaw_metadata["openclaw_timeout"] = Config.openclaw_stream_timeout
+        # Merge openclaw_* into the metadata so the handler picks it up.
+        hermes_metadata.update(openclaw_metadata)
         return {
             "agent_id": agent_id,
             "agent_name": agent_id,
@@ -250,6 +276,19 @@ async def resolve_agent(
                     hermes_metadata["hermes_model"] = Config.hermes_model
                 if getattr(Config, "hermes_stream_timeout", None):
                     hermes_metadata["hermes_timeout"] = Config.hermes_stream_timeout
+                openclaw_metadata: dict[str, Any] = {}
+                if getattr(Config, "openclaw_api_url", None):
+                    openclaw_metadata["openclaw_api_url"] = Config.openclaw_api_url
+                if getattr(Config, "openclaw_api_key", None):
+                    openclaw_metadata["openclaw_api_key"] = Config.openclaw_api_key
+                if getattr(Config, "openclaw_agent_id", None):
+                    openclaw_metadata["openclaw_agent_id"] = Config.openclaw_agent_id
+                if getattr(Config, "openclaw_agent_selector", None):
+                    openclaw_metadata["openclaw_agent_selector"] = Config.openclaw_agent_selector
+                if getattr(Config, "openclaw_stream_timeout", None):
+                    openclaw_metadata["openclaw_timeout"] = Config.openclaw_stream_timeout
+                # Merge openclaw_* into the metadata so the handler picks it up.
+                hermes_metadata.update(openclaw_metadata)
                 return {
                     "agent_id": agent_id,
                     "agent_name": agent_id,
@@ -283,6 +322,19 @@ async def resolve_agent(
                     hermes_metadata["hermes_model"] = Config.hermes_model
                 if getattr(Config, "hermes_stream_timeout", None):
                     hermes_metadata["hermes_timeout"] = Config.hermes_stream_timeout
+                openclaw_metadata: dict[str, Any] = {}
+                if getattr(Config, "openclaw_api_url", None):
+                    openclaw_metadata["openclaw_api_url"] = Config.openclaw_api_url
+                if getattr(Config, "openclaw_api_key", None):
+                    openclaw_metadata["openclaw_api_key"] = Config.openclaw_api_key
+                if getattr(Config, "openclaw_agent_id", None):
+                    openclaw_metadata["openclaw_agent_id"] = Config.openclaw_agent_id
+                if getattr(Config, "openclaw_agent_selector", None):
+                    openclaw_metadata["openclaw_agent_selector"] = Config.openclaw_agent_selector
+                if getattr(Config, "openclaw_stream_timeout", None):
+                    openclaw_metadata["openclaw_timeout"] = Config.openclaw_stream_timeout
+                # Merge openclaw_* into the metadata so the handler picks it up.
+                hermes_metadata.update(openclaw_metadata)
                 return {
                     "agent_id": agent_id,
                     "agent_name": agent_id,
