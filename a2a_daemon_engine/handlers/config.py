@@ -181,6 +181,13 @@ class Config:
     hermes_model: str = "hermes-agent"
     hermes_stream_timeout: float = 300.0
 
+    # Phase 10: OpenCLAW Gateway bridge settings
+    openclaw_api_url: str | None = None
+    openclaw_api_key: str | None = None
+    openclaw_agent_id: str | None = None
+    openclaw_agent_selector: str = "model"
+    openclaw_stream_timeout: float = 300.0
+
     # Phase 10: Core Engine (ai_agent_core_engine) gateway bridge settings
     core_engine_graphql_url: str | None = None
     core_engine_ws_url: str | None = None
@@ -257,6 +264,25 @@ class Config:
         )
         cls.hermes_stream_timeout = float(
             setting.get("HERMES_STREAM_TIMEOUT", setting.get("hermes_stream_timeout", 300.0))
+        )
+
+        # OpenCLAW Gateway bridge settings
+        cls.openclaw_api_url = (
+            setting.get("OPENCLAW_API_URL") or setting.get("openclaw_api_url")
+        )
+        cls.openclaw_api_key = (
+            setting.get("OPENCLAW_API_KEY") or setting.get("openclaw_api_key")
+        )
+        cls.openclaw_agent_id = (
+            setting.get("OPENCLAW_AGENT_ID") or setting.get("openclaw_agent_id")
+        )
+        cls.openclaw_agent_selector = (
+            setting.get("OPENCLAW_AGENT_SELECTOR")
+            or setting.get("openclaw_agent_selector")
+            or "model"
+        )
+        cls.openclaw_stream_timeout = float(
+            setting.get("OPENCLAW_STREAM_TIMEOUT", setting.get("openclaw_stream_timeout", 300.0))
         )
 
         # Core Engine (ai_agent_core_engine) gateway bridge settings
