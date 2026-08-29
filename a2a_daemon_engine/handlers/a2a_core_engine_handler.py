@@ -152,12 +152,13 @@ class CoreEngineAgentHandler:
             user_query = input_messages[-1].get("content", "")
 
         if stream_queue is not None:
-            # Streaming (WebSocket) path: dispatch_ask_model pre-creates the
-            # thread, so we must provide a concrete thread_uuid.
-            if not thread_uuid:
-                thread_uuid = str(_uuid.uuid4())
+            # Streaming (WebSocket) path. Pass thread_uuid as-is — when None,
+            # the core engine's _get_thread creates a new thread and returns
+            # its UUID via the askModel response. Do NOT mint a random UUID
+            # here: the core engine would try to look it up and fail with
+            # "Not found any thread" because it was never persisted.
             return self._ask_streaming(
-                agent_uuid, thread_uuid, user_query, input_messages,
+                agent_uuid, thread_uuid or "", user_query, input_messages,
                 context, stream_queue, stream_event,
             )
         # Non-streaming (GraphQL) path: pass thread_uuid as-is (None is OK).
@@ -368,12 +369,13 @@ class CoreEngineAgentHandler:
                 "action": "ask_model",
                 "arguments": {
                     "agent_uuid": agent_uuid,
-                    "thread_uuid": thread_uuid,
                     "user_query": user_query,
                     "updated_by": self.updated_by,
                     "stream": True,
                 },
             }
+            if thread_uuid:
+                request["arguments"]["thread_uuid"] = thread_uuid
             self._ws_send(ws, json.dumps(request))
 
             # Drain frames
