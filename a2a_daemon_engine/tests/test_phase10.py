@@ -24,6 +24,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from a2a_daemon_engine.handlers.a2a_ai_agent_utility import (
+    AGENT_TYPE_MAP,
     AI_CORE_AVAILABLE,
     _default_agent_uuid,
     _emit_status_to_sdk,
@@ -259,8 +260,132 @@ class TestResolveAgent:
         assert result["module_name"] is None
         assert result["class_name"] is None
 
+    async def test_resolve_agent_type_from_metadata(
+        self, mock_a2a_core, mock_logger
+    ):
+        """agent_type shorthand in metadata resolves to module/class."""
+        mock_a2a_core.get_a2a_agent = AsyncMock(
+            return_value={
+                "agent_id": "hermes-agent",
+                "agent_name": "Hermes Agent",
+                "metadata": {"agent_type": "hermes"},
+            }
+        )
+        with patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_core",
+            mock_a2a_core,
+        ):
+            result = await resolve_agent(
+                "ep#part", "hermes-agent", logger=mock_logger
+            )
+        assert result is not None
+        assert result["module_name"] == AGENT_TYPE_MAP["hermes"]["module_name"]
+        assert result["class_name"] == AGENT_TYPE_MAP["hermes"]["class_name"]
 
-class TestLoadAgentHandler:
+    async def test_resolve_agent_type_from_config_fallback(
+        self, mock_a2a_core, mock_logger
+    ):
+        """Empty metadata + Config.a2a_ai_agent_type → mapping used."""
+        mock_a2a_core.get_a2a_agent = AsyncMock(
+            return_value={
+                "agent_id": "default-agent",
+                "agent_name": "Default Agent",
+                "metadata": {},
+            }
+        )
+        with patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_core",
+            mock_a2a_core,
+        ), patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_type",
+            "core_engine",
+        ):
+            result = await resolve_agent(
+                "ep#part", "default-agent", logger=mock_logger
+            )
+        assert result is not None
+        assert result["module_name"] == AGENT_TYPE_MAP["core_engine"]["module_name"]
+        assert result["class_name"] == AGENT_TYPE_MAP["core_engine"]["class_name"]
+
+    async def test_resolve_agent_explicit_module_overrides_type(
+        self, mock_a2a_core, mock_logger
+    ):
+        """Explicit module_name/class_name in metadata wins over agent_type."""
+        mock_a2a_core.get_a2a_agent = AsyncMock(
+            return_value={
+                "agent_id": "custom-agent",
+                "agent_name": "Custom Agent",
+                "metadata": {
+                    "agent_type": "hermes",
+                    "module_name": "custom.module",
+                    "class_name": "CustomHandler",
+                },
+            }
+        )
+        with patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_core",
+            mock_a2a_core,
+        ):
+            result = await resolve_agent(
+                "ep#part", "custom-agent", logger=mock_logger
+            )
+        assert result is not None
+        assert result["module_name"] == "custom.module"
+        assert result["class_name"] == "CustomHandler"
+
+    async def test_resolve_agent_unknown_type_falls_through(
+        self, mock_a2a_core, mock_logger
+    ):
+        """Unknown agent_type with no module/class → None (falls through)."""
+        mock_a2a_core.get_a2a_agent = AsyncMock(
+            return_value={
+                "agent_id": "weird-agent",
+                "agent_name": "Weird Agent",
+                "metadata": {"agent_type": "nonexistent"},
+            }
+        )
+        with patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_core",
+            mock_a2a_core,
+        ), patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_module",
+            None,
+        ), patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_class",
+            None,
+        ):
+            result = await resolve_agent(
+                "ep#part", "weird-agent", logger=mock_logger
+            )
+        assert result is not None
+        assert result["module_name"] is None
+        assert result["class_name"] is None
+
+
+class TestAgentTypeMap:
+    def test_hermes_mapping(self):
+        assert AGENT_TYPE_MAP["hermes"]["module_name"] == (
+            "a2a_daemon_engine.handlers.a2a_hermes_handler"
+        )
+        assert AGENT_TYPE_MAP["hermes"]["class_name"] == "HermesAgentHandler"
+
+    def test_core_engine_mapping(self):
+        assert AGENT_TYPE_MAP["core_engine"]["module_name"] == (
+            "a2a_daemon_engine.handlers.a2a_core_engine_handler"
+        )
+        assert AGENT_TYPE_MAP["core_engine"]["class_name"] == "CoreEngineAgentHandler"
+
+    def test_openclaw_mapping(self):
+        assert AGENT_TYPE_MAP["openclaw"]["module_name"] == (
+            "a2a_daemon_engine.handlers.a2a_openclaw_handler"
+        )
+        assert AGENT_TYPE_MAP["openclaw"]["class_name"] == "OpenClawAgentHandler"
+
+    def test_llm_mapping(self):
+        assert AGENT_TYPE_MAP["llm"]["module_name"] == (
+            "ai_agent_core_engine.handlers.llm_handler"
+        )
+        assert AGENT_TYPE_MAP["llm"]["class_name"] == "LLMHandler"
     def test_missing_module_or_class(self):
         with pytest.raises(ValueError):
             load_agent_handler({"module_name": ""})
