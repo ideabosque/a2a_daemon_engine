@@ -1031,7 +1031,7 @@ async def execute_ai_agent_streaming(
         # Status events (WORKING/COMPLETED) are NOT emitted to the SDK
         # EventQueue because on_message_send rejects TaskStatusUpdateEvent.
         if final_content:
-            await _emit_to_sdk(event_queue, final_content, _logger)
+            await _emit_to_sdk(event_queue, final_content, _logger, context_id=thread_uuid)
 
         # Emit final status to SSE only (not SDK EventQueue)
         await _emit_status_to_sse(
@@ -1069,12 +1069,13 @@ async def _emit_to_sdk(
     event_queue: Any,
     text: str,
     logger: logging.Logger | None = None,
+    context_id: str | None = None,
 ) -> None:
     """Emit a text chunk into the SDK EventQueue."""
     try:
         from .a2a_executor import _agent_text_message, _emit_event
 
-        msg = _agent_text_message(text)
+        msg = _agent_text_message(text, context_id=context_id)
         await _emit_event(event_queue, msg)
     except Exception as e:
         if logger:
