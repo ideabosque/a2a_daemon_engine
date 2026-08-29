@@ -283,8 +283,9 @@ async def resolve_agent(
             metadata["hermes_timeout"] = Config.hermes_stream_timeout
 
         # Resolve handler module/class.
-        # Priority: explicit module_name/class_name > agent_type shorthand >
-        # Config env-var fallback (explicit > agent_type shorthand).
+        # Priority: explicit module_name/class_name in metadata > agent_type
+        # shorthand (metadata or Config) > nothing (caller must set it in
+        # metadata for custom handlers).
         _type_from_meta = metadata.get("agent_type") or metadata.get("agentType")
         _type_from_config = getattr(Config, "a2a_ai_agent_type", None)
         _mapped = AGENT_TYPE_MAP.get(_type_from_meta or _type_from_config or "", {})
@@ -300,13 +301,11 @@ async def resolve_agent(
                 metadata.get("module_name")
                 or metadata.get("moduleName")
                 or _mapped.get("module_name")
-                or Config.a2a_ai_agent_module
             ),
             "class_name": (
                 metadata.get("class_name")
                 or metadata.get("className")
                 or _mapped.get("class_name")
-                or Config.a2a_ai_agent_class
             ),
             "instructions": metadata.get("instructions"),
             "num_of_messages": metadata.get("num_of_messages", 10),

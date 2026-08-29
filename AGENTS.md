@@ -92,17 +92,14 @@ Environment variables that control the `ai_agent_core_engine` bridge:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `A2A_AI_AGENT_TYPE` | `None` | Handler shorthand: `hermes`, `core_engine`, `openclaw`, or `llm` (maps to module/class via `AGENT_TYPE_MAP`) |
-| `A2A_AI_AGENT_MODULE` | `None` | Python module path for the LLM handler (explicit fallback for custom handlers not in the type map) |
-| `A2A_AI_AGENT_CLASS` | `None` | Class name inside that module to instantiate |
 | `A2A_DEFAULT_AGENT_UUID` | `a2a-default-agent` | Fallback agent UUID when request metadata does not specify one |
 | `A2A_STREAM_TIMEOUT` | `120.0` | Maximum seconds to wait for a streaming LLM call |
 | `A2A_STREAMING_ENABLED` | `true` | Whether streaming (`SendStreamingMessage`) is allowed |
 
 Handler resolution priority (first wins):
-1. Agent metadata `module_name` / `class_name` (explicit, per-agent)
+1. Agent metadata `module_name` / `class_name` (explicit, per-agent — escape hatch for custom handlers)
 2. Agent metadata `agent_type` (shorthand → `AGENT_TYPE_MAP`)
-3. `Config.a2a_ai_agent_module` / `a2a_ai_agent_class` (env-var explicit fallback)
-4. `Config.a2a_ai_agent_type` (env-var shorthand fallback)
+3. `Config.a2a_ai_agent_type` (env-var shorthand fallback)
 
 `AGENT_TYPE_MAP` in `a2a_ai_agent_utility.py` maps:
 
