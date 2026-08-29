@@ -265,10 +265,12 @@ async def resolve_agent(
             "module_name": (
                 metadata.get("module_name")
                 or metadata.get("moduleName")
+                or Config.a2a_ai_agent_module
             ),
             "class_name": (
                 metadata.get("class_name")
                 or metadata.get("className")
+                or Config.a2a_ai_agent_class
             ),
             "instructions": metadata.get("instructions"),
             "num_of_messages": metadata.get("num_of_messages", 10),
