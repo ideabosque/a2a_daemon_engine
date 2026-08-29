@@ -173,10 +173,8 @@ class TestResolveAgent:
     async def test_resolve_agent_module_class_from_metadata(
         self, mock_a2a_core, mock_logger
     ):
-        """module_name / class_name come solely from the agent's DB metadata.
-
-        The former A2A_AI_AGENT_MODULE/CLASS env-var fallback was removed —
-        metadata is the single source of truth.
+        """module_name / class_name come from the agent's DB metadata first,
+        with Config-level defaults as a global fallback.
         """
         mock_a2a_core.get_a2a_agent = AsyncMock(
             return_value={
@@ -191,6 +189,12 @@ class TestResolveAgent:
         with patch(
             "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_core",
             mock_a2a_core,
+        ), patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_module",
+            "fallback.module",
+        ), patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_class",
+            "FallbackHandler",
         ):
             result = await resolve_agent(
                 "ep#part", "test-agent-001", logger=mock_logger
@@ -199,10 +203,38 @@ class TestResolveAgent:
         assert result["module_name"] == "configured.module"
         assert result["class_name"] == "ConfiguredHandler"
 
-    async def test_resolve_agent_no_module_when_metadata_empty(
+    async def test_resolve_agent_module_class_from_config_fallback(
         self, mock_a2a_core, mock_logger
     ):
-        """Empty metadata → no module/class (no env-var fallback)."""
+        """Empty metadata module/class → Config defaults used as fallback."""
+        mock_a2a_core.get_a2a_agent = AsyncMock(
+            return_value={
+                "agent_id": "test-agent-001",
+                "agent_name": "Test Agent",
+                "metadata": {},
+            }
+        )
+        with patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_core",
+            mock_a2a_core,
+        ), patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_module",
+            "fallback.module",
+        ), patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_class",
+            "FallbackHandler",
+        ):
+            result = await resolve_agent(
+                "ep#part", "test-agent-001", logger=mock_logger
+            )
+        assert result is not None
+        assert result["module_name"] == "fallback.module"
+        assert result["class_name"] == "FallbackHandler"
+
+    async def test_resolve_agent_no_module_when_metadata_and_config_empty(
+        self, mock_a2a_core, mock_logger
+    ):
+        """Empty metadata and no Config defaults → module/class are None."""
         mock_a2a_core.get_a2a_agent = AsyncMock(
             return_value={
                 "agent_id": "test-agent-001",
@@ -213,6 +245,12 @@ class TestResolveAgent:
         with patch(
             "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_core",
             mock_a2a_core,
+        ), patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_module",
+            None,
+        ), patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_class",
+            None,
         ):
             result = await resolve_agent(
                 "ep#part", "test-agent-001", logger=mock_logger
