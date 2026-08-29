@@ -47,6 +47,33 @@ except Exception:  # pragma: no cover
 AI_CORE_AVAILABLE = _AI_CORE_AVAILABLE
 
 # ---------------------------------------------------------------------------
+# Agent-type → handler module/class mapping
+# ---------------------------------------------------------------------------
+
+# Shorthand ``agent_type`` values that resolve to the full module/class pair.
+# Used when an agent record (or Config fallback) specifies ``agent_type``
+# instead of explicit ``module_name`` / ``class_name``. New handlers are
+# added here so callers can use the shorthand without knowing the Python path.
+AGENT_TYPE_MAP: dict[str, dict[str, str]] = {
+    "hermes": {
+        "module_name": "a2a_daemon_engine.handlers.a2a_hermes_handler",
+        "class_name": "HermesAgentHandler",
+    },
+    "core_engine": {
+        "module_name": "a2a_daemon_engine.handlers.a2a_core_engine_handler",
+        "class_name": "CoreEngineAgentHandler",
+    },
+    "openclaw": {
+        "module_name": "a2a_daemon_engine.handlers.a2a_openclaw_handler",
+        "class_name": "OpenClawAgentHandler",
+    },
+    "llm": {
+        "module_name": "ai_agent_core_engine.handlers.llm_handler",
+        "class_name": "LLMHandler",
+    },
+}
+
+# ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
 
@@ -255,6 +282,13 @@ async def resolve_agent(
         if not metadata.get("hermes_timeout") and getattr(Config, "hermes_stream_timeout", None):
             metadata["hermes_timeout"] = Config.hermes_stream_timeout
 
+        # Resolve handler module/class.
+        # Priority: explicit module_name/class_name > agent_type shorthand >
+        # Config env-var fallback (explicit > agent_type shorthand).
+        _type_from_meta = metadata.get("agent_type") or metadata.get("agentType")
+        _type_from_config = getattr(Config, "a2a_ai_agent_type", None)
+        _mapped = AGENT_TYPE_MAP.get(_type_from_meta or _type_from_config or "", {})
+
         agent_config: dict[str, Any] = {
             "agent_id": result.get("agent_id"),
             "agent_name": result.get("agent_name"),
@@ -265,11 +299,13 @@ async def resolve_agent(
             "module_name": (
                 metadata.get("module_name")
                 or metadata.get("moduleName")
+                or _mapped.get("module_name")
                 or Config.a2a_ai_agent_module
             ),
             "class_name": (
                 metadata.get("class_name")
                 or metadata.get("className")
+                or _mapped.get("class_name")
                 or Config.a2a_ai_agent_class
             ),
             "instructions": metadata.get("instructions"),
@@ -1179,6 +1215,7 @@ def _split_partition_key(partition_key: str) -> tuple[str, str]:
 
 __all__ = [
     "AI_CORE_AVAILABLE",
+    "AGENT_TYPE_MAP",
     "BridgeResult",
     "StreamingChunk",
     "StreamingState",

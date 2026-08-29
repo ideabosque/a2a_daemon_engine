@@ -170,8 +170,9 @@ class Config:
     # Phase 10: ai_agent_core_engine bridge settings
     # module_name / class_name are resolved from the agent's DB metadata,
     # with Config-level defaults as a global fallback for agents that don't
-    # specify a handler. a2a_default_agent_uuid names which agent to use
-    # when the caller omits agent_uuid.
+    # specify a handler. agent_type is a shorthand that maps to module/class
+    # via AGENT_TYPE_MAP in a2a_ai_agent_utility.py.
+    a2a_ai_agent_type: str | None = None
     a2a_ai_agent_module: str | None = None
     a2a_ai_agent_class: str | None = None
     a2a_default_agent_uuid: str | None = None
@@ -248,6 +249,7 @@ class Config:
             cls.CACHE_ENABLED = setting.get("cache_enabled", True)
 
         # Phase 10 settings
+        cls.a2a_ai_agent_type = setting.get("A2A_AI_AGENT_TYPE") or setting.get("a2a_ai_agent_type")
         cls.a2a_ai_agent_module = setting.get("A2A_AI_AGENT_MODULE") or setting.get("a2a_ai_agent_module")
         cls.a2a_ai_agent_class = setting.get("A2A_AI_AGENT_CLASS") or setting.get("a2a_ai_agent_class")
         cls.a2a_default_agent_uuid = setting.get("A2A_DEFAULT_AGENT_UUID") or setting.get("a2a_default_agent_uuid")
