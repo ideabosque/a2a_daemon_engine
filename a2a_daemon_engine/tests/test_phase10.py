@@ -170,9 +170,39 @@ class TestResolveAgent:
             result = await resolve_agent("ep#part", "missing-agent", logger=mock_logger)
             assert result is None
 
-    async def test_resolve_agent_uses_config_module_defaults(
+    async def test_resolve_agent_module_class_from_metadata(
         self, mock_a2a_core, mock_logger
     ):
+        """module_name / class_name come solely from the agent's DB metadata.
+
+        The former A2A_AI_AGENT_MODULE/CLASS env-var fallback was removed —
+        metadata is the single source of truth.
+        """
+        mock_a2a_core.get_a2a_agent = AsyncMock(
+            return_value={
+                "agent_id": "test-agent-001",
+                "agent_name": "Test Agent",
+                "metadata": {
+                    "module_name": "configured.module",
+                    "class_name": "ConfiguredHandler",
+                },
+            }
+        )
+        with patch(
+            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_core",
+            mock_a2a_core,
+        ):
+            result = await resolve_agent(
+                "ep#part", "test-agent-001", logger=mock_logger
+            )
+        assert result is not None
+        assert result["module_name"] == "configured.module"
+        assert result["class_name"] == "ConfiguredHandler"
+
+    async def test_resolve_agent_no_module_when_metadata_empty(
+        self, mock_a2a_core, mock_logger
+    ):
+        """Empty metadata → no module/class (no env-var fallback)."""
         mock_a2a_core.get_a2a_agent = AsyncMock(
             return_value={
                 "agent_id": "test-agent-001",
@@ -183,19 +213,13 @@ class TestResolveAgent:
         with patch(
             "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_core",
             mock_a2a_core,
-        ), patch(
-            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_module",
-            "configured.module",
-        ), patch(
-            "a2a_daemon_engine.handlers.a2a_ai_agent_utility.Config.a2a_ai_agent_class",
-            "ConfiguredHandler",
         ):
             result = await resolve_agent(
                 "ep#part", "test-agent-001", logger=mock_logger
             )
         assert result is not None
-        assert result["module_name"] == "configured.module"
-        assert result["class_name"] == "ConfiguredHandler"
+        assert result["module_name"] is None
+        assert result["class_name"] is None
 
 
 class TestLoadAgentHandler:

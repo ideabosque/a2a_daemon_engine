@@ -134,66 +134,6 @@ async def resolve_agent(
 
     agent_id = agent_uuid or _default_agent_uuid()
 
-    # Fast path: if env-var defaults are set, skip the DB lookup entirely
-    # when the requested agent matches the default.  This avoids hanging on
-    # DynamoDB retries when the agent doesn't exist and env vars provide
-    # the handler config (e.g., Hermes handler via env vars).
-    if (
-        Config.a2a_ai_agent_module
-        and Config.a2a_ai_agent_class
-        and agent_id == _default_agent_uuid()
-    ):
-        if logger:
-            logger.info(
-                f"resolve_agent: using env-var defaults for default agent '{agent_id}'"
-            )
-        hermes_metadata: dict[str, Any] = {}
-        if getattr(Config, "hermes_api_url", None):
-            hermes_metadata["hermes_api_url"] = Config.hermes_api_url
-        if getattr(Config, "hermes_api_key", None):
-            hermes_metadata["hermes_api_key"] = Config.hermes_api_key
-        if getattr(Config, "hermes_model", None):
-            hermes_metadata["hermes_model"] = Config.hermes_model
-        if getattr(Config, "hermes_stream_timeout", None):
-            hermes_metadata["hermes_timeout"] = Config.hermes_stream_timeout
-        openclaw_metadata: dict[str, Any] = {}
-        if getattr(Config, "openclaw_api_url", None):
-            openclaw_metadata["openclaw_api_url"] = Config.openclaw_api_url
-        if getattr(Config, "openclaw_api_key", None):
-            openclaw_metadata["openclaw_api_key"] = Config.openclaw_api_key
-        if getattr(Config, "openclaw_agent_id", None):
-            openclaw_metadata["openclaw_agent_id"] = Config.openclaw_agent_id
-        if getattr(Config, "openclaw_agent_selector", None):
-            openclaw_metadata["openclaw_agent_selector"] = Config.openclaw_agent_selector
-        if getattr(Config, "openclaw_stream_timeout", None):
-            openclaw_metadata["openclaw_timeout"] = Config.openclaw_stream_timeout
-        # Merge openclaw_* into the metadata so the handler picks it up.
-        hermes_metadata.update(openclaw_metadata)
-        openclaw_metadata: dict[str, Any] = {}
-        if getattr(Config, "openclaw_api_url", None):
-            openclaw_metadata["openclaw_api_url"] = Config.openclaw_api_url
-        if getattr(Config, "openclaw_api_key", None):
-            openclaw_metadata["openclaw_api_key"] = Config.openclaw_api_key
-        if getattr(Config, "openclaw_agent_id", None):
-            openclaw_metadata["openclaw_agent_id"] = Config.openclaw_agent_id
-        if getattr(Config, "openclaw_agent_selector", None):
-            openclaw_metadata["openclaw_agent_selector"] = Config.openclaw_agent_selector
-        if getattr(Config, "openclaw_stream_timeout", None):
-            openclaw_metadata["openclaw_timeout"] = Config.openclaw_stream_timeout
-        # Merge openclaw_* into the metadata so the handler picks it up.
-        hermes_metadata.update(openclaw_metadata)
-        return {
-            "agent_id": agent_id,
-            "agent_name": agent_id,
-            "metadata": hermes_metadata,
-            "module_name": Config.a2a_ai_agent_module,
-            "class_name": Config.a2a_ai_agent_class,
-            "instructions": None,
-            "num_of_messages": 10,
-            "tool_call_role": "tool",
-            "mcp_servers": [],
-        }
-
     try:
         if hasattr(Config.a2a_core, "get_a2a_agent"):
             raw = Config.a2a_core.get_a2a_agent(
@@ -257,95 +197,13 @@ async def resolve_agent(
                 result["agent_name"] = result["agentName"]
 
         if not isinstance(result, dict):
-            # Fallback: if the agent was not found in the DB but env-var
-            # defaults are set, return a synthetic config so the bridge
-            # can still load the handler (e.g., Hermes handler via
-            # A2A_AI_AGENT_MODULE / A2A_AI_AGENT_CLASS).
-            if Config.a2a_ai_agent_module and Config.a2a_ai_agent_class:
-                if logger:
-                    logger.info(
-                        f"resolve_agent: agent '{agent_id}' not in DB; "
-                        "using env-var defaults for handler resolution."
-                    )
-                hermes_metadata: dict[str, Any] = {}
-                if getattr(Config, "hermes_api_url", None):
-                    hermes_metadata["hermes_api_url"] = Config.hermes_api_url
-                if getattr(Config, "hermes_api_key", None):
-                    hermes_metadata["hermes_api_key"] = Config.hermes_api_key
-                if getattr(Config, "hermes_model", None):
-                    hermes_metadata["hermes_model"] = Config.hermes_model
-                if getattr(Config, "hermes_stream_timeout", None):
-                    hermes_metadata["hermes_timeout"] = Config.hermes_stream_timeout
-                openclaw_metadata: dict[str, Any] = {}
-                if getattr(Config, "openclaw_api_url", None):
-                    openclaw_metadata["openclaw_api_url"] = Config.openclaw_api_url
-                if getattr(Config, "openclaw_api_key", None):
-                    openclaw_metadata["openclaw_api_key"] = Config.openclaw_api_key
-                if getattr(Config, "openclaw_agent_id", None):
-                    openclaw_metadata["openclaw_agent_id"] = Config.openclaw_agent_id
-                if getattr(Config, "openclaw_agent_selector", None):
-                    openclaw_metadata["openclaw_agent_selector"] = Config.openclaw_agent_selector
-                if getattr(Config, "openclaw_stream_timeout", None):
-                    openclaw_metadata["openclaw_timeout"] = Config.openclaw_stream_timeout
-                # Merge openclaw_* into the metadata so the handler picks it up.
-                hermes_metadata.update(openclaw_metadata)
-                return {
-                    "agent_id": agent_id,
-                    "agent_name": agent_id,
-                    "metadata": hermes_metadata,
-                    "module_name": Config.a2a_ai_agent_module,
-                    "class_name": Config.a2a_ai_agent_class,
-                    "instructions": None,
-                    "num_of_messages": 10,
-                    "tool_call_role": "tool",
-                    "mcp_servers": [],
-                }
+            # Agent not found in the DB — no synthetic fallback. Module/class
+            # come solely from the resolved agent's metadata (single source of
+            # truth); an unregistered agent is genuinely unresolvable.
             return None
 
-        # If the DB returned a dict with all-None fields, treat as not found
-        # and apply the env-var fallback.
+        # A DB record with all-None fields is treated as not found.
         if result.get("agent_id") is None and result.get("agent_name") is None:
-            if Config.a2a_ai_agent_module and Config.a2a_ai_agent_class:
-                if logger:
-                    logger.info(
-                        f"resolve_agent: agent '{agent_id}' DB record has null fields; "
-                        "using env-var defaults for handler resolution."
-                    )
-                # Include Hermes connection details from Config so the
-                # handler can reach the Hermes API Server without DB metadata.
-                hermes_metadata: dict[str, Any] = {}
-                if getattr(Config, "hermes_api_url", None):
-                    hermes_metadata["hermes_api_url"] = Config.hermes_api_url
-                if getattr(Config, "hermes_api_key", None):
-                    hermes_metadata["hermes_api_key"] = Config.hermes_api_key
-                if getattr(Config, "hermes_model", None):
-                    hermes_metadata["hermes_model"] = Config.hermes_model
-                if getattr(Config, "hermes_stream_timeout", None):
-                    hermes_metadata["hermes_timeout"] = Config.hermes_stream_timeout
-                openclaw_metadata: dict[str, Any] = {}
-                if getattr(Config, "openclaw_api_url", None):
-                    openclaw_metadata["openclaw_api_url"] = Config.openclaw_api_url
-                if getattr(Config, "openclaw_api_key", None):
-                    openclaw_metadata["openclaw_api_key"] = Config.openclaw_api_key
-                if getattr(Config, "openclaw_agent_id", None):
-                    openclaw_metadata["openclaw_agent_id"] = Config.openclaw_agent_id
-                if getattr(Config, "openclaw_agent_selector", None):
-                    openclaw_metadata["openclaw_agent_selector"] = Config.openclaw_agent_selector
-                if getattr(Config, "openclaw_stream_timeout", None):
-                    openclaw_metadata["openclaw_timeout"] = Config.openclaw_stream_timeout
-                # Merge openclaw_* into the metadata so the handler picks it up.
-                hermes_metadata.update(openclaw_metadata)
-                return {
-                    "agent_id": agent_id,
-                    "agent_name": agent_id,
-                    "metadata": hermes_metadata,
-                    "module_name": Config.a2a_ai_agent_module,
-                    "class_name": Config.a2a_ai_agent_class,
-                    "instructions": None,
-                    "num_of_messages": 10,
-                    "tool_call_role": "tool",
-                    "mcp_servers": [],
-                }
             return None
 
         # Normalize metadata into flat config if present.
@@ -407,12 +265,10 @@ async def resolve_agent(
             "module_name": (
                 metadata.get("module_name")
                 or metadata.get("moduleName")
-                or Config.a2a_ai_agent_module
             ),
             "class_name": (
                 metadata.get("class_name")
                 or metadata.get("className")
-                or Config.a2a_ai_agent_class
             ),
             "instructions": metadata.get("instructions"),
             "num_of_messages": metadata.get("num_of_messages", 10),

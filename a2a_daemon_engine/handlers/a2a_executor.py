@@ -312,8 +312,8 @@ class A2ADaemonExecutor(AgentExecutor):
         invokes the LLM handler for a real response.
 
         Note: ai_agent_core_engine is NOT required — the bridge resolves the
-        handler dynamically (per-agent metadata or A2A_AI_AGENT_MODULE/CLASS
-        env vars), so the Hermes bridge (HermesAgentHandler) works without the
+        handler dynamically from the agent's DB metadata (module_name /
+        class_name), so the Hermes bridge (HermesAgentHandler) works without the
         core engine installed. The only requirement is a configured a2a_core
         (DynamoDB or PostgreSQL) for task/message persistence.
         """
@@ -476,8 +476,8 @@ class A2ADaemonExecutor(AgentExecutor):
             return
 
         # Phase 10: attempt the LLM handler bridge. ai_agent_core_engine is
-        # NOT required — the handler is resolved dynamically (per-agent metadata
-        # or A2A_AI_AGENT_MODULE/CLASS env vars), so the Hermes bridge works
+        # NOT required — the handler is resolved dynamically from the agent's DB
+        # metadata (module_name / class_name), so the Hermes bridge works
         # without the core engine. a2a_core (DynamoDB or PostgreSQL) is the
         # only requirement, for task/message persistence.
         from .a2a_ai_agent_utility import (
