@@ -920,7 +920,7 @@ async def execute_ai_agent_streaming(
 
     # 7. Drain loop with dual-path emission
     state = StreamingState()
-    sse_task_id = run_uuid or thread_uuid or "streaming-task"
+    sse_task_id = run_uuid or thread_uuid or task_id or "streaming-task"
 
     try:
         start_time = time.monotonic()
