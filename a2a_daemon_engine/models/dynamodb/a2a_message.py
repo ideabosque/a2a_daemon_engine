@@ -55,6 +55,9 @@ class A2AMessageModel(BaseModel):
     from_agent_id = UnicodeAttribute()
     to_agent_id = UnicodeAttribute()
     message_type = UnicodeAttribute()
+    task_id = UnicodeAttribute()
+    context_id = UnicodeAttribute(null=True)  # A2A protocol contextId
+    role = UnicodeAttribute(null=True)  # A2A role: user, agent
     payload = MapAttribute()
     status = UnicodeAttribute()  # sent, delivered, acknowledged, failed
     created_at = UTCDateTimeAttribute()
@@ -228,6 +231,9 @@ def insert_update_a2a_message(info: ResolveInfo, **kwargs: dict[str, Any]) -> No
             "from_agent_id": kwargs["from_agent_id"],
             "to_agent_id": kwargs["to_agent_id"],
             "message_type": kwargs["message_type"],
+            "task_id": kwargs.get("task_id"),
+            "context_id": kwargs.get("context_id"),
+            "role": kwargs.get("role"),
             "payload": kwargs.get("payload", {}),
             "status": kwargs.get("status", "sent"),
             "created_at": pendulum.now("UTC"),

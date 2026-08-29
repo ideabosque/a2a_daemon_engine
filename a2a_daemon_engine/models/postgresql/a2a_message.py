@@ -39,6 +39,8 @@ class A2AMessageModel(Base):
     to_agent_id = Column(String, nullable=True)
     message_type = Column(String, nullable=True)
     task_id = Column(String, nullable=True)  # Links to a2a_tasks.task_id
+    context_id = Column(String, nullable=True)  # A2A protocol contextId (conversation group)
+    role = Column(String, nullable=True)  # A2A role: user, agent
     payload = Column(JSONB, nullable=True)
     status = Column(String, nullable=True)  # sent, delivered, acknowledged, failed
 
@@ -59,6 +61,12 @@ class A2AMessageModel(Base):
             "idx_a2a_messages_partition_status",
             "partition_key",
             "status",
+        ),
+        # Conversation history index: partition + context_id for get_a2a_messages
+        Index(
+            "idx_a2a_messages_partition_context",
+            "partition_key",
+            "context_id",
         ),
     )
 

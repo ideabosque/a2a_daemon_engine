@@ -15,6 +15,8 @@ class A2AMessageType(ObjectType):
     to_agent_id = String()
     message_type = String()
     task_id = String()
+    context_id = String()
+    role = String()
     payload = JSON()
     status = String()
     created_at = DateTime()

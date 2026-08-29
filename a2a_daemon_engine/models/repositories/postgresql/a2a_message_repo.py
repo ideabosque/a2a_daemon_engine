@@ -80,6 +80,7 @@ class A2AMessagePGRepository(EntityRepository):
         message_type = filters.get("message_type")
         from_agent_id = filters.get("from_agent_id")
         to_agent_id = filters.get("to_agent_id")
+        context_id = filters.get("context_id")
 
         query = session.query(A2AMessageModel)
         if partition_key:
@@ -94,6 +95,8 @@ class A2AMessagePGRepository(EntityRepository):
             query = query.filter(A2AMessageModel.from_agent_id == from_agent_id)
         if to_agent_id:
             query = query.filter(A2AMessageModel.to_agent_id == to_agent_id)
+        if context_id:
+            query = query.filter(A2AMessageModel.context_id == context_id)
 
         total = query.count()
         offset = (page_number - 1) * limit
@@ -137,6 +140,10 @@ class A2AMessagePGRepository(EntityRepository):
                         row.delivered_at = pendulum.now("UTC")
                 if "payload" in kwargs:
                     row.payload = kwargs["payload"]
+                if "context_id" in kwargs:
+                    row.context_id = kwargs["context_id"]
+                if "role" in kwargs:
+                    row.role = kwargs["role"]
             else:
                 row = self._create_row(info, **kwargs)
                 session.add(row)
@@ -170,6 +177,8 @@ class A2AMessagePGRepository(EntityRepository):
             "to_agent_id": kwargs.get("to_agent_id"),
             "message_type": kwargs.get("message_type"),
             "task_id": kwargs.get("task_id"),
+            "context_id": kwargs.get("context_id"),
+            "role": kwargs.get("role"),
             "payload": kwargs.get("payload", {}),
             "status": kwargs.get("status", "sent"),
             "created_at": pendulum.now("UTC"),

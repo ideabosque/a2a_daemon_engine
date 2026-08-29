@@ -634,29 +634,19 @@ async def _persist_thread_run_message(
     logger: logging.Logger | None = None,
     task_id: str | None = None,
 ) -> None:
-    """Persist thread, run, and message records via Config.a2a_core GraphQL."""
+    """Persist the agent's response message via Config.a2a_core.
+
+    Uses ``context_id`` (aliased from ``thread_uuid``) so messages are grouped
+    by A2A protocol conversation. The user message is persisted separately by
+    ``_persist_user_message`` before the handler call.
+    """
     if not Config.a2a_core:
         return
 
     _logger = logger or (Config.logger if Config.logger else logging.getLogger(__name__))
 
     try:
-        # Insert/update thread
-        if thread_uuid and hasattr(Config.a2a_core, "insert_update_a2a_thread"):
-            await Config.a2a_core.insert_update_a2a_thread(
-                partition_key=partition_key,
-                thread_id=thread_uuid,
-                updated_by="a2a_daemon",
-            )
-        # Insert/update run
-        if run_uuid and hasattr(Config.a2a_core, "insert_update_a2a_run"):
-            await Config.a2a_core.insert_update_a2a_run(
-                partition_key=partition_key,
-                run_id=run_uuid,
-                thread_id=thread_uuid,
-                updated_by="a2a_daemon",
-            )
-        # Insert/update message
+        # Insert/update message (agent response)
         if hasattr(Config.a2a_core, "insert_update_a2a_message"):
             await Config.a2a_core.insert_update_a2a_message(
                 partition_key=partition_key,
@@ -664,12 +654,48 @@ async def _persist_thread_run_message(
                 role=role,
                 content=content,
                 metadata=metadata or {},
-                updated_by="a2a_daemon",
+                context_id=thread_uuid,
                 task_id=task_id,
+                updated_by="a2a_daemon",
             )
     except Exception as e:
         if _logger:
             _logger.warning(f"Phase 10 persistence warning: {e}")
+
+
+async def _persist_user_message(
+    partition_key: str,
+    thread_uuid: str | None,
+    user_query: str,
+    task_id: str | None = None,
+    logger: logging.Logger | None = None,
+) -> None:
+    """Persist the user's message so conversation history includes it.
+
+    Called before ``ask_model`` so ``get_a2a_messages`` can find it on
+    the next turn. Uses ``context_id`` (aliased from ``thread_uuid``).
+    """
+    if not Config.a2a_core or not user_query:
+        return
+
+    _logger = logger or (Config.logger if Config.logger else logging.getLogger(__name__))
+
+    try:
+        import uuid as _uuid
+
+        if hasattr(Config.a2a_core, "insert_update_a2a_message"):
+            await Config.a2a_core.insert_update_a2a_message(
+                partition_key=partition_key,
+                message_id=f"msg-{_uuid.uuid4().hex}",
+                role="user",
+                content=user_query,
+                context_id=thread_uuid,
+                task_id=task_id,
+                updated_by="a2a_daemon",
+            )
+    except Exception as e:
+        if _logger:
+            _logger.warning(f"User message persistence warning: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +754,16 @@ async def execute_ai_agent_non_streaming(
     )
     _apply_thread_context(context, thread_uuid, run_uuid)
 
-    # 5. Invoke handler
+    # 5. Persist the user's message so conversation history includes it
+    await _persist_user_message(
+        partition_key=partition_key,
+        thread_uuid=thread_uuid,
+        user_query=user_query,
+        task_id=task_id,
+        logger=_logger,
+    )
+
+    # 6. Invoke handler
     ask_model = getattr(handler, "ask_model", None)
     if ask_model is None:
         return BridgeResult(error="Handler has no ask_model method")
@@ -745,14 +780,14 @@ async def execute_ai_agent_non_streaming(
         _logger.error(f"ask_model failed: {e}", exc_info=True)
         return BridgeResult(error=f"LLM invocation failed: {e}")
 
-    # 6. Normalize
+    # 7. Normalize
     result = normalize_final_output(raw_output)
     if not result.message_id:
         import uuid as _uuid
 
         result.message_id = f"msg-{_uuid.uuid4().hex}"
 
-    # 7. Persist
+    # 8. Persist agent response
     await _persist_thread_run_message(
         partition_key=partition_key,
         thread_uuid=thread_uuid,
@@ -836,7 +871,16 @@ async def execute_ai_agent_streaming(
     )
     _apply_thread_context(context, thread_uuid, run_uuid)
 
-    # 5. Prepare streaming primitives
+    # 5. Persist the user's message so conversation history includes it
+    await _persist_user_message(
+        partition_key=partition_key,
+        thread_uuid=thread_uuid,
+        user_query=user_query,
+        task_id=task_id,
+        logger=_logger,
+    )
+
+    # 6. Prepare streaming primitives
     stream_queue: _queue.Queue[Any] = _queue.Queue()
     stream_event = threading.Event()
 

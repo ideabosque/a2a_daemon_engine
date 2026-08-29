@@ -601,9 +601,8 @@ class TestExecuteAiAgentNonStreaming:
                 logger=mock_logger,
             )
         assert result.error is None
-        mock_a2a_core.insert_update_a2a_thread.assert_awaited_once()
-        mock_a2a_core.insert_update_a2a_run.assert_awaited_once()
-        mock_a2a_core.insert_update_a2a_message.assert_awaited_once()
+        # Phase 12: user message + agent message = 2 calls to insert_update_a2a_message
+        assert mock_a2a_core.insert_update_a2a_message.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -737,9 +736,8 @@ class TestExecuteAiAgentStreaming:
                 logger=mock_logger,
             )
         assert result.error is None
-        mock_a2a_core.insert_update_a2a_thread.assert_awaited_once()
-        mock_a2a_core.insert_update_a2a_run.assert_awaited_once()
-        mock_a2a_core.insert_update_a2a_message.assert_awaited_once()
+        # Phase 12: user message + agent message = 2 calls to insert_update_a2a_message
+        assert mock_a2a_core.insert_update_a2a_message.await_count == 2
 
 
 class TestParseChunk:
