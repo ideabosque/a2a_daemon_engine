@@ -144,6 +144,8 @@ class A2ACore(Graphql):
                 to_agent_id=kwargs.get("to_agent_id", "user"),
                 message_type=role,
                 task_id=kwargs.get("task_id"),
+                context_id=kwargs.get("context_id"),
+                role=role,
                 payload=payload,
                 status="delivered",
             )
@@ -220,21 +222,17 @@ class A2ACore(Graphql):
         )
 
     async def get_a2a_messages(self, **kwargs):
-        """Fetch conversation history for an A2A context, oldest first.
+        """Fetch conversation history for an A2A contextId, oldest first.
 
         ``build_input_messages`` calls this to give the LLM prior turns.
 
-        Each completed task is one turn. The user side lives in
-        ``a2a_tasks.input_data.user_query``; the agent side is read from
-        ``a2a_messages.payload.content`` rather than ``output_data.content``
-        because the latter is stored truncated to 500 chars. There is no
-        thread/context column on ``a2a_messages``, so the conversation is
-        reached via the existing ``a2a_messages.task_id -> a2a_tasks.task_id``
-        link, filtered by the task's ``context_id``.
+        With Phase 12, ``a2a_messages`` carries ``context_id`` and ``role``
+        columns, so the conversation is read directly from the messages table
+        — no JOIN with ``a2a_tasks`` is needed. Both user and agent messages
+        for the same ``context_id`` are returned in chronological order.
 
-        Only COMPLETED tasks are returned, which excludes the in-flight task
-        for the current turn — ``build_input_messages`` appends that
-        ``user_query`` itself.
+        Falls back to the legacy task-JOIN query when ``context_id`` is not
+        present on the messages table (pre-migration deployments).
 
         Returns ``{"items": [{"role": ..., "content": ...}, ...]}`` — the shape
         ``build_input_messages`` expects.
@@ -255,35 +253,59 @@ class A2ACore(Graphql):
         from sqlalchemy import text
 
         try:
+            # Phase 12: direct query on a2a_messages by context_id.
             # Newest-first so LIMIT keeps the most recent turns; reversed below.
             rows = session.execute(
                 text(
                     """
-                    SELECT t.input_data, m.payload
-                    FROM a2a_tasks t
-                    LEFT JOIN a2a_messages m
-                      ON m.task_id = t.task_id
-                     AND m.partition_key = t.partition_key
-                    WHERE t.partition_key = :pk
-                      AND t.context_id = :ctx
-                      AND t.status = 'COMPLETED'
-                    ORDER BY t.created_at DESC
+                    SELECT role, payload
+                    FROM a2a_messages
+                    WHERE partition_key = :pk
+                      AND context_id = :ctx
+                    ORDER BY created_at DESC
                     LIMIT :lim
                     """
                 ),
-                {"pk": partition_key, "ctx": context_id, "lim": max(1, limit // 2)},
+                {"pk": partition_key, "ctx": context_id, "lim": limit},
             ).fetchall()
 
+            if not rows:
+                # Fallback: legacy task-JOIN query for pre-migration deployments.
+                rows = session.execute(
+                    text(
+                        """
+                        SELECT t.input_data, m.payload
+                        FROM a2a_tasks t
+                        LEFT JOIN a2a_messages m
+                          ON m.task_id = t.task_id
+                         AND m.partition_key = t.partition_key
+                        WHERE t.partition_key = :pk
+                          AND t.context_id = :ctx
+                          AND t.status = 'COMPLETED'
+                        ORDER BY t.created_at DESC
+                        LIMIT :lim
+                        """
+                    ),
+                    {"pk": partition_key, "ctx": context_id, "lim": max(1, limit // 2)},
+                ).fetchall()
+
+                items: list[dict[str, Any]] = []
+                for input_data, payload in reversed(rows):
+                    user_query = (
+                        input_data.get("user_query") if isinstance(input_data, dict) else None
+                    )
+                    if user_query:
+                        items.append({"role": "user", "content": user_query})
+                    content = payload.get("content") if isinstance(payload, dict) else None
+                    if content:
+                        items.append({"role": "assistant", "content": content})
+                return {"items": items}
+
             items: list[dict[str, Any]] = []
-            for input_data, payload in reversed(rows):
-                user_query = (
-                    input_data.get("user_query") if isinstance(input_data, dict) else None
-                )
-                if user_query:
-                    items.append({"role": "user", "content": user_query})
+            for role, payload in reversed(rows):
                 content = payload.get("content") if isinstance(payload, dict) else None
                 if content:
-                    items.append({"role": "assistant", "content": content})
+                    items.append({"role": role or "user", "content": content})
             return {"items": items}
         except Exception as e:
             if self.logger:

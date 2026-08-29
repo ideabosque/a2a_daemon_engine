@@ -587,3 +587,48 @@ blockers.
 | 9 | Advanced extensions (gRPC, subscriptions, health, rate limit, cancellation, passport, cost) | Complete | `a2a_grpc.py`, `a2a_graphql_subscriptions.py`, `a2a_health_monitor.py`, `a2a_rate_limiter.py`, `a2a_cancellation.py`, `a2a_secure_passport.py`, `a2a_cost_extension.py` |
 | 10 | Gateway-mediated ai_agent_core_engine integration (GraphQL non-streaming + WebSocket streaming, dual-path emission, SSE client-facing) | In Progress | `a2a_core_engine_handler.py` (new), `a2a_ai_agent_utility.py`, `a2a_executor.py`, `config.py`, `AGENTS.md`, `tests/test_phase10.py`, `tests/test_core_engine_handler.py` |
 | 11 | A2A protocol compliance through the gateway (Agent Card discovery + the 8 unrouted JSON-RPC methods) | Planned | `main.py`, `a2a_server.py`, `routes.yaml`, `a2a_extended_card.py`, `a2a_pushconfig.py` — see [`A2A_PROTOCOL_COMPLIANCE_PLAN.md`](A2A_PROTOCOL_COMPLIANCE_PLAN.md) |
+| 12 | Conversation grouping via contextId (add context_id + role to a2a_messages, persist user message, simplify history query) | Planned | `models/a2a_message.py`, `a2a_core.py`, `a2a_ai_agent_utility.py`, `migration/alembic/versions/0006_add_context_id_to_messages.py` |
+
+## Phase 12: Conversation Grouping via contextId
+
+**Status:** Planned
+
+### Motivation
+
+The A2A protocol groups conversations by `contextId` (a first-class field on
+`Message`, `Task`, and `TaskStatusUpdateEvent`). The daemon's `a2a_tasks`
+table already has `context_id`, but `a2a_messages` does not — so messages are
+only linked to conversations indirectly via `task_id → task.context_id`.
+
+This works but has gaps:
+- The **user's message** is not saved to `a2a_messages` — it lives in
+  `a2a_tasks.input_data.user_query`, making `a2a_messages` incomplete as a
+  conversation record.
+- `get_a2a_messages` must JOIN tasks + messages to reconstruct history, which
+  is fragile and excludes the current turn's user message.
+- There is no `role` column on `a2a_messages` — the `message_type` column is
+  overloaded for this purpose.
+
+### Changes
+
+| Task | Description |
+|------|-------------|
+| 12.1 | Add `context_id` (String, nullable) and `role` (String, nullable) columns to `a2a_messages` table (DynamoDB + PostgreSQL models) |
+| 12.2 | Add Alembic migration `0006_add_context_id_to_messages.py` |
+| 12.3 | Update `insert_update_a2a_message` (both DynamoDB and PG repos) to accept and persist `context_id` and `role` |
+| 12.4 | Update `_persist_thread_run_message` in `a2a_ai_agent_utility.py` to pass `context_id` (aliased from `thread_uuid`) to `insert_update_a2a_message` |
+| 12.5 | Update `get_a2a_messages` in `a2a_core.py` to query `a2a_messages` directly by `context_id` (no task JOIN needed) |
+| 12.6 | Update GraphQL `A2AMessageType` to expose `context_id` and `role` fields |
+| 12.7 | Update `message_list` GraphQL query to accept `contextId` filter |
+| 12.8 | Add RLS policy for `context_id` on `a2a_messages` (migration) |
+
+### Design Decisions
+
+| Decision | Rationale |
+|----------|----------|
+| Use `context_id` (not `thread_uuid`) | Aligns with the A2A protocol's native `contextId` field name |
+| Keep `task_id` on `a2a_messages` | Still useful for linking a message to a specific task within a conversation |
+| Add `role` column | Replaces the `message_type` overload — `role` is the A2A protocol's term (user/agent) |
+| Keep `message_type` for backward compat | Existing inter-agent messages use `message_type`; new conversation messages use `role` |
+| Don't create separate `a2a_threads` table | `context_id` on `a2a_tasks` already serves as the thread identifier; a separate table adds no value |
+| Persist user message before `ask_model` | The user's message must be in `a2a_messages` so `get_a2a_messages` can find it on the next turn |
