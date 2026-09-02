@@ -151,6 +151,13 @@ class A2ADaemonEngine(Graphql):
         if _pk and Config.DB_BACKEND == "postgresql":
             Config._set_rls_context(_pk)
 
+        # Record the tenant for the push-notification dispatch path, which the
+        # SDK invokes without a ServerCallContext (Phase 13, C4).
+        if _pk:
+            from .handlers.a2a_pushconfig_store import set_dispatch_partition
+
+            set_dispatch_partition(_pk)
+
         if params.get("jsonrpc") != "2.0":
             raise ValueError("A2A protocol calls must use JSON-RPC 2.0 format")
 

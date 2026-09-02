@@ -154,6 +154,13 @@ Implemented in the daemon code:
 - `DefaultRequestHandler` now receives an SDK-compatible push-config store and an
   SDK `extended_agent_card`.
 - Push config writes go through the existing webhook URL validator before being stored.
+
+> **Correction (2026-09-02 audit):** the `extended_agent_card` supplied here is a
+> verbatim `CopyFrom` of the public card, and no `push_sender` is wired. So
+> `agent/getAuthenticatedExtendedCard` currently returns nothing beyond the public
+> card (`ExtendedAgentCardManager` is built but unused), and no push webhook is ever
+> delivered despite `capabilities.pushNotifications=true`. See Phase 13 (C3, C5) in
+> [`A2A_DEVELOPMENT_PLAN.md`](A2A_DEVELOPMENT_PLAN.md) for the remediation plan.
 - Focused Phase 11 tests cover Agent Card URL rewriting, the expanded JSON-RPC method
   table, v1 aliases, and webhook rejection.
 
