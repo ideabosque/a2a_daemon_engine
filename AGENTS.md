@@ -109,6 +109,7 @@ Handler resolution priority (first wins):
 | `core_engine` | `a2a_daemon_engine.handlers.a2a_core_engine_handler` | `CoreEngineAgentHandler` |
 | `openclaw` | `a2a_daemon_engine.handlers.a2a_openclaw_handler` | `OpenClawAgentHandler` |
 | `llm` | `ai_agent_core_engine.handlers.llm_handler` | `LLMHandler` |
+| `a2a_proxy` | `a2a_daemon_engine.handlers.a2a_a2a_proxy_handler` | `A2AProxyHandler` |
 
 Startup flag `Config.phase10_available` is `True` only when both `ai_agent_core_engine` is importable and `Config.a2a_core` is initialized.
 
