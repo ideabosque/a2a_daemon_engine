@@ -88,6 +88,134 @@ def _agent_text_message(text: str, context_id: str | None = None) -> Any:
     return message
 
 
+def _file_part(file_info: dict[str, Any]) -> Any | None:
+    """Build an A2A file ``Part`` from a bridge ``output_files`` entry.
+
+    The installed SDK uses the v1.0 protobuf flattened ``Part`` — a ``oneof
+    content`` of ``text`` / ``url`` / ``raw`` / ``data`` plus sibling
+    ``filename`` / ``media_type`` fields. A file part carries either a ``url``
+    (reference) or ``raw`` bytes (inline). Common producer key spellings are
+    accepted; an entry with no locatable content is skipped (returns ``None``)
+    rather than emitting an empty part.
+    """
+    if not isinstance(file_info, dict):
+        return None
+
+    filename = (
+        file_info.get("filename")
+        or file_info.get("name")
+        or file_info.get("file_name")
+        or ""
+    )
+    media_type = (
+        file_info.get("media_type")
+        or file_info.get("mime_type")
+        or file_info.get("content_type")
+        or file_info.get("type")
+        or ""
+    )
+    url = (
+        file_info.get("url")
+        or file_info.get("uri")
+        or file_info.get("file_url")
+        or file_info.get("download_url")
+    )
+    raw = file_info.get("bytes") if file_info.get("bytes") is not None else file_info.get("raw")
+
+    kwargs: dict[str, Any] = {}
+    if filename:
+        kwargs["filename"] = filename
+    if media_type:
+        kwargs["media_type"] = media_type
+
+    if url:
+        kwargs["url"] = str(url)
+    elif raw is not None:
+        if isinstance(raw, str):
+            # A str payload is assumed base64-encoded; fall back to UTF-8 bytes
+            # if it is not valid base64.
+            import base64
+
+            try:
+                raw = base64.b64decode(raw, validate=True)
+            except Exception:
+                raw = raw.encode("utf-8")
+        kwargs["raw"] = raw
+    else:
+        return None
+
+    try:
+        return Part(**kwargs)
+    except Exception:  # pragma: no cover - SDK variants without these fields
+        return None
+
+
+def _data_part(data: dict[str, Any]) -> Any | None:
+    """Build an A2A structured-data ``Part`` from a dict.
+
+    Maps onto the protobuf ``Part.data`` field (a ``google.protobuf.Struct``).
+    Returns ``None`` if the payload cannot be represented as a Struct.
+    """
+    if not isinstance(data, dict) or not data:
+        return None
+    try:
+        # Protobuf ``Part.data`` is a google.protobuf.Value; wrap the dict in a
+        # Value's struct_value.
+        from google.protobuf.struct_pb2 import Value
+
+        value = Value()
+        value.struct_value.update(data)
+        return Part(data=value)
+    except Exception:  # pragma: no cover - non-protobuf SDK or unrepresentable data
+        try:
+            return Part(data=data)
+        except Exception:
+            return None
+
+
+def _agent_parts_message(
+    text: str | None = None,
+    files: list[dict[str, Any]] | None = None,
+    data_parts: list[dict[str, Any]] | None = None,
+    context_id: str | None = None,
+) -> Any:
+    """Build an agent ``Message`` carrying text, file, and/or data parts.
+
+    This is the multimodal counterpart to :func:`_agent_text_message`. The
+    bridge already resolves ``output_files`` from the backend; without this the
+    executor emitted a text-only part and those files were silently dropped
+    (Phase 13, C1). When only text is present the result is equivalent to
+    :func:`_agent_text_message`.
+    """
+    parts: list[Any] = []
+    if text:
+        try:
+            parts.append(Part(text=text))
+        except Exception:  # pragma: no cover
+            pass
+    for file_info in files or []:
+        part = _file_part(file_info)
+        if part is not None:
+            parts.append(part)
+    for data in data_parts or []:
+        part = _data_part(data)
+        if part is not None:
+            parts.append(part)
+
+    # Nothing representable — preserve prior behavior with a (possibly empty)
+    # text message so callers always get a well-formed Message.
+    if not parts:
+        return _agent_text_message(text or "", context_id=context_id)
+
+    message = Message(role=Role.ROLE_AGENT, parts=parts)
+    if context_id:
+        try:
+            message.context_id = context_id
+        except Exception:  # pragma: no cover - SDK variants without the field
+            pass
+    return message
+
+
 async def _emit_event(event_queue: EventQueue, event: Any) -> None:
     """Emit an event across supported A2A SDK EventQueue API versions."""
     if hasattr(event_queue, "enqueue_event"):
@@ -143,6 +271,62 @@ def _dict_get_any(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
         if key in data:
             return data[key]
     return default
+
+
+def _extract_input_parts(
+    request_context: RequestContext | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Collect non-text (file/data) parts from the inbound A2A message.
+
+    ``RequestContext.get_user_input()`` returns text only, so client-supplied
+    ``FilePart``/``DataPart`` were previously dropped before any handler saw
+    them (Phase 13, C2). This captures them as plain dicts so they can be
+    persisted onto the task record (``input_data.input_files`` /
+    ``input_data.input_data_parts``) rather than silently discarded. Returns
+    ``(files, data)``; both empty when the message is text-only.
+    """
+    files: list[dict[str, Any]] = []
+    data: list[dict[str, Any]] = []
+
+    message = getattr(request_context, "message", None)
+    parts = getattr(message, "parts", None) or []
+    for part in parts:
+        which = part.WhichOneof("content") if hasattr(part, "WhichOneof") else None
+        filename = getattr(part, "filename", "") or ""
+        media_type = getattr(part, "media_type", "") or ""
+
+        url = getattr(part, "url", "") or ""
+        raw = getattr(part, "raw", b"") or b""
+
+        if which == "text" or (which is None and getattr(part, "text", "")):
+            continue
+        if which == "url" or (which is None and url):
+            files.append(
+                {"url": url, "filename": filename, "media_type": media_type}
+            )
+        elif which == "raw" or (which is None and raw):
+            import base64
+
+            encoded = (
+                base64.b64encode(raw).decode("ascii")
+                if isinstance(raw, (bytes, bytearray))
+                else raw
+            )
+            files.append(
+                {"bytes": encoded, "filename": filename, "media_type": media_type}
+            )
+        elif which == "data" or (which is None and getattr(part, "data", None)):
+            payload: Any = getattr(part, "data", None)
+            try:
+                from google.protobuf.json_format import MessageToDict
+
+                payload = MessageToDict(part.data)
+            except Exception:  # pragma: no cover - non-protobuf SDK
+                pass
+            if payload:
+                data.append(payload)
+
+    return files, data
 
 
 def _streaming_requested(
@@ -352,6 +536,15 @@ class A2ADaemonExecutor(AgentExecutor):
                 "sessionId",
             )
 
+            # Capture any inbound file/data parts so they are recorded rather
+            # than dropped (Phase 13, C2).
+            input_files, input_data_parts = _extract_input_parts(request_context)
+            input_data: dict[str, Any] = {"user_query": user_input}
+            if input_files:
+                input_data["input_files"] = input_files
+            if input_data_parts:
+                input_data["input_data_parts"] = input_data_parts
+
             # Persist task (in_progress)
             if hasattr(self.config.a2a_core, "insert_update_a2a_task"):
                 try:
@@ -360,7 +553,7 @@ class A2ADaemonExecutor(AgentExecutor):
                         task_type=task_type,
                         assigned_agent_id=agent_uuid or "",
                         status="in_progress",
-                        input_data={"user_query": user_input},
+                        input_data=input_data,
                         context_id=context_id,
                         updated_by="a2a_daemon",
                     )
@@ -401,7 +594,11 @@ class A2ADaemonExecutor(AgentExecutor):
                 else:
                     await _emit_event(
                         event_queue,
-                        _agent_text_message(result.content, effective_context_id),
+                        _agent_parts_message(
+                            text=result.content,
+                            files=result.output_files,
+                            context_id=effective_context_id,
+                        ),
                     )
 
                 # Update task status
@@ -529,6 +726,16 @@ class A2ADaemonExecutor(AgentExecutor):
             # for linking messages to this task.
             task_id = _dict_get_any(task_data, "task_id", "taskId", "id", default="")
             task_type = _dict_get_any(task_data, "task_type", "taskType", default="ai_agent")
+            # Capture any inbound file/data parts so they are recorded rather
+            # than dropped (Phase 13, C2).
+            input_files, input_data_parts = _extract_input_parts(request_context)
+            input_data: dict[str, Any] = {
+                "user_query": user_input or task_data.get("description", "")
+            }
+            if input_files:
+                input_data["input_files"] = input_files
+            if input_data_parts:
+                input_data["input_data_parts"] = input_data_parts
             if hasattr(self.config.a2a_core, "insert_update_a2a_task"):
                 try:
                     task_result = await self.config.a2a_core.insert_update_a2a_task(
@@ -537,7 +744,7 @@ class A2ADaemonExecutor(AgentExecutor):
                         task_type=task_type,
                         assigned_agent_id=agent_uuid or "",
                         status="in_progress",
-                        input_data={"user_query": user_input or task_data.get("description", "")},
+                        input_data=input_data,
                         context_id=context_id,
                         updated_by="a2a_daemon",
                     )
@@ -579,6 +786,17 @@ class A2ADaemonExecutor(AgentExecutor):
                             event_queue,
                             _agent_text_message(
                                 f"AI agent error: {result.error}", effective_context_id
+                            ),
+                        )
+                    elif result.output_files:
+                        # Text was already streamed token-by-token; emit only the
+                        # resolved output files as file parts at completion so they
+                        # are not dropped (Phase 13, C1).
+                        await _emit_event(
+                            event_queue,
+                            _agent_parts_message(
+                                files=result.output_files,
+                                context_id=effective_context_id,
                             ),
                         )
                     # Update A2A task record status for streaming path
@@ -628,7 +846,11 @@ class A2ADaemonExecutor(AgentExecutor):
                 else:
                     await _emit_event(
                         event_queue,
-                        _agent_text_message(result.content, effective_context_id),
+                        _agent_parts_message(
+                            text=result.content,
+                            files=result.output_files,
+                            context_id=effective_context_id,
+                        ),
                     )
                 # NOTE: No COMPLETED/FAILED status events emitted here — the A2A
                 # SDK v2 on_message_send rejects TaskStatusUpdateEvent.  Status

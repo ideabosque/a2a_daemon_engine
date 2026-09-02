@@ -66,3 +66,45 @@ request objects through `a2a_jsonrpc_bridge.py` and dispatches to the same SDK
 request handler methods used by the HTTP protocol path.
 
 Non-JSON-RPC action payloads are rejected.
+
+## Streaming through the gateway — a known deviation (Phase 13, C6)
+
+The A2A spec's `message/stream` and `tasks/resubscribe` are defined to return a
+live **SSE stream** of `TaskStatusUpdateEvent` / `TaskArtifactUpdateEvent`
+objects on the RPC connection. The **standalone** SDK app honors this. When the
+daemon runs **through `silvaengine_gateway`**, however, the gateway dispatches
+`dispatch_a2a` as a single request/response call — it cannot hold an SSE body
+open on the JSON-RPC POST. So in gateway mode:
+
+- `A2ADaemonEngine.a2a()` drains the SDK stream generator to completion
+  (`_collect_message_stream` / `_collect_task_subscription` in `main.py`) and
+  returns **one aggregated JSON-RPC response**:
+  `{ "result": { "status": "streaming_complete", "events": [...] } }`.
+- **Live tokens are delivered out-of-band** on the partition-scoped SSE channel
+  `GET /{endpoint_id}/a2a_sse` (the `sse_manager` broadcast the executor's
+  streaming path feeds per chunk). A client that wants live streaming subscribes
+  there and filters by `task_id`.
+
+**Implication for conformance:** a spec-strict client that expects an SSE body on
+the `message/stream` RPC call will instead receive an aggregated response, and
+must use `/{endpoint_id}/a2a_sse` for live events. This is a property of the
+gateway request/response model, not a bug in the daemon. The standalone
+`GET /tasks/{task_id}/stream` route remains spec-shaped for non-gateway
+deployments.
+
+```mermaid
+sequenceDiagram
+    participant C as A2A Client
+    participant GW as silvaengine_gateway
+    participant EN as A2ADaemonEngine.a2a()
+    participant EX as A2ADaemonExecutor
+    participant SSE as /{ep}/a2a_sse (sse_manager)
+
+    C->>GW: POST /{ep}/a2a  (message/stream)
+    GW->>EN: dispatch_a2a (request/response)
+    EN->>EX: drain SDK stream to completion
+    EX-->>SSE: live token chunks (partition broadcast)
+    C-->>SSE: GET /{ep}/a2a_sse (live events, filter by task_id)
+    EN-->>GW: aggregated { status: streaming_complete, events: [...] }
+    GW-->>C: single JSON-RPC response
+```

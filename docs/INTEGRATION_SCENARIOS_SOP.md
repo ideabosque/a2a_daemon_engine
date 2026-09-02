@@ -12,9 +12,9 @@
 | Field | Value |
 |---|---|
 | SOP title | A2A Daemon Engine CI Integration SOP |
-| Version | 0.3.0 (draft — adds Hermes + Core Engine bridge scenarios + agent card skill rename) |
+| Version | 0.4.0 (draft — adds Phase 13 protocol-conformance scenarios: multimodal Parts, durable push notifications + delivery, extended-card wiring, configurable I/O modes, gateway streaming deviation; metadata-only handler resolution) |
 | Owner / contact | SilvaEngine Team — `<confirm contact>` `assumed` |
-| Last updated | 2026-07-18 |
+| Last updated | 2026-09-02 |
 | Business domain | `generic` (A2A protocol daemon / multi-agent platform — not ecommerce/logistics/finance) |
 | Target environment | `dev` (local daemon at `http://localhost:8001`; local PostgreSQL at `localhost:5432`); `staging` optional `assumed` |
 | Approval status | `draft` |
@@ -57,6 +57,33 @@ workflow.
     `human_in_the_loop`) instead of internal operation names
   - **Per-task external-run registry** in `A2ADaemonExecutor` for cancel and
     approval passthrough to Hermes / Core Engine backends
+  - **Phase 13 — protocol conformance (C1–C8):**
+    - **Multimodal Parts (C1/C2)** — agent `output_files` emitted as A2A file
+      Parts (`url` / `raw`), structured output as data Parts; inbound
+      client file/data Parts captured onto the task `input_data`
+      (`input_files` / `input_data_parts`) instead of being dropped
+      (`_agent_parts_message` / `_extract_input_parts` in `a2a_executor.py`)
+    - **Push notification delivery + durable config (C3/C4)** — an SDK
+      `push_sender` POSTs registered webhooks on task-state change; the
+      `DurablePushNotificationConfigStore` (`a2a_pushconfig_store.py`)
+      persists configs into `a2a_settings` (DynamoDB **and** PostgreSQL) so
+      they survive process/Lambda recycle; anti-SSRF `WebhookUrlValidator`
+      gates every write
+    - **Authenticated extended Agent Card (C5)** — `agent/getAuthenticatedExtendedCard`
+      returns a card enriched over the public one (traceability extension +
+      documentation URL), not a verbatim copy
+    - **Interrupt states (C7)** — streaming backends map `approval` →
+      `INPUT_REQUIRED` and `auth_required` → `AUTH_REQUIRED` (backend-agnostic)
+    - **Configurable I/O modes (C8)** — `default_input_modes` /
+      `default_output_modes` settings-driven (default `text`)
+    - **Gateway streaming deviation (C6)** — through `silvaengine_gateway`,
+      `message/stream` / `tasks/resubscribe` return one aggregated JSON-RPC
+      response; live events flow out-of-band on `/{ep}/a2a_sse` (documented
+      deviation, see `A2A_ARCHITECTURE.md`)
+  - **Metadata-only handler resolution** — the per-agent handler is resolved
+    from the agent's DB `metadata.module_name` / `class_name` (or the
+    `A2A_AI_AGENT_TYPE` shorthand); the legacy `A2A_AI_AGENT_MODULE` /
+    `A2A_AI_AGENT_CLASS` env-var fallback has been **removed**
   - **Live test report export** with per-call input arguments and output JSON (see Section 12)
 - **Out of scope:**
   - Unit tests in isolation (covered separately by `test_phase6/8/9/10.py` and `test_executor_unit.py`)
@@ -76,7 +103,7 @@ workflow.
 | Environment target | `dev` — local daemon started via `python a2a_daemon_engine/tests/start_daemon.py` |
 | Base URLs / endpoints | `http://localhost:8001` (SDK surface + `/rest`); serverless path tested in-process via `A2ADaemonEngine.a2a(**event)` |
 | Credential source | Project venv `c:\Python312\env\Scripts\activate.bat`; test secrets from `a2a_daemon_engine/tests/.env` (copied from `.env.example`) — **never inline secrets in SOP/scripts/reports** |
-| Required env vars (names only) | `region_name`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `endpoint_id`, `part_id`, `transport`, `port`, `jwt_secret_key`, `AUTH_PROVIDER`, `A2A_RUN_LIVE_API_TESTS`, `A2A_TEST_INITIALIZE_TABLES`, `A2A_AI_AGENT_MODULE`, `A2A_AI_AGENT_CLASS`, `A2A_DEFAULT_AGENT_UUID`, `A2A_STREAMING_ENABLED`, `A2A_STREAM_TIMEOUT`, `db_backend` (`dynamodb` \| `postgresql`), `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DB` (or `DATABASE_URL`), `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_MODEL`, `HERMES_STREAM_TIMEOUT`, `CORE_ENGINE_GRAPHQL_URL`, `CORE_ENGINE_WS_URL`, `CORE_ENGINE_TOKEN`, `CORE_ENGINE_AGENT_UUID`, `CORE_ENGINE_UPDATED_BY`, `CORE_ENGINE_STREAM_TIMEOUT` |
+| Required env vars (names only) | `region_name`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `endpoint_id`, `part_id`, `transport`, `port`, `jwt_secret_key`, `AUTH_PROVIDER`, `A2A_RUN_LIVE_API_TESTS`, `A2A_TEST_INITIALIZE_TABLES`, `A2A_AI_AGENT_TYPE`, `A2A_DEFAULT_AGENT_UUID`, `A2A_STREAMING_ENABLED`, `A2A_STREAM_TIMEOUT`, `A2A_PUSH_WEBHOOK_ALLOWLIST`, `A2A_PUSH_REQUIRE_HTTPS`, `A2A_DEFAULT_INPUT_MODES`, `A2A_DEFAULT_OUTPUT_MODES`, `A2A_DOCUMENTATION_URL`, `db_backend` (`dynamodb` \| `postgresql`), `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DB` (or `DATABASE_URL`), `HERMES_API_URL`, `HERMES_API_KEY`, `HERMES_MODEL`, `HERMES_STREAM_TIMEOUT`, `CORE_ENGINE_GRAPHQL_URL`, `CORE_ENGINE_WS_URL`, `CORE_ENGINE_TOKEN`, `CORE_ENGINE_AGENT_UUID`, `CORE_ENGINE_UPDATED_BY`, `CORE_ENGINE_STREAM_TIMEOUT` |
 | Data stores | **DynamoDB** (local Docker `amazon/dynamodb-local` on `:8000`, or AWS test tables; `pynamodb` models under `models/dynamodb`) **OR** **PostgreSQL** (local `localhost:5432` or remote; SQLAlchemy models under `models/postgresql`; Alembic migrations under `migration/`). Backend selected by `db_backend` in `tests/.env`. |
 | Messaging / events | In-process `EventQueue` / `SSEEventQueue` (no external message broker); SSE over HTTP |
 | Access constraints | None for dev (localhost); `FlexJWTMiddleware` gates `/rest/*` except `auth/token` and public protocol routes (`/`, `/v1`, `/.well-known/...`, `/tasks/{id}/stream`) |
@@ -160,6 +187,11 @@ Foundation (env + venv + SDK + data store)
         - INT-014: Hermes Agent HTTP+SSE bridge
         - INT-015: Core Engine gateway GraphQL/WebSocket bridge
    -> Agent Card Skill Validation (renamed capability-style skills)
+   -> Phase 13 Protocol Conformance
+        - INT-017: multimodal Parts round-trip (output files / inbound file+data)
+        - INT-018: push notification durability + delivery (both backends)
+        - INT-019: authenticated extended card differs from public
+        - INT-020: configurable I/O modes + gateway streaming deviation
    -> Failure & Resilience
   -> Data Reconciliation (persisted==returned, referential isolation, PK format)
   -> Live Report Export (per-call input/output — see Section 12)
@@ -370,7 +402,7 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 | **Priority** | P2 (P1 if release depends on it) `assumed` |
 | **Type** | end-to-end |
 | **CI trigger** | pre-release |
-| **Preconditions** | `Config.phase10_available is True`; `A2A_AI_AGENT_MODULE`/`A2A_AI_AGENT_CLASS` set; `a2a_core` initialized |
+| **Preconditions** | `Config.phase10_available is True`; agent record resolves a handler via `metadata.module_name`/`class_name` (or `A2A_AI_AGENT_TYPE` shorthand); `a2a_core` initialized |
 | **Dependencies** | a2a_ai_agent_utility, ai_agent_core_engine, LLM handler |
 | **Test data** | 1 agent config `ai_agent_core_engine`; metadata aliases `agent_uuid`/`agentId`, `thread_uuid`/`threadId`, `stream`/`streaming` |
 | **Steps** | 1. Resolve agent config. 2. Load LLM handler. 3. `ask_model` with streaming bridging into `EventQueue`/`SSEEventQueue`. 4. Honor `A2A_STREAM_TIMEOUT`. |
@@ -446,6 +478,74 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 | **Validation points** | skills_count_is_4, skill_ids_are_capabilities, no_internal_operation_names, skills_have_required_fields |
 | **Cross-system checks** | Skills describe what the daemon does for clients, not how it routes internally |
 
+### INT-017 — Multimodal Parts round-trip (Phase 13 C1/C2)
+
+| Field | Value |
+|---|---|
+| **ID** | INT-017 |
+| **Name** | Agent output files emitted as file Parts; inbound file/data Parts captured |
+| **Priority** | P2 |
+| **Type** | API + workflow |
+| **CI trigger** | nightly |
+| **Preconditions** | INT-002 passed; a handler whose `ask_model` returns `output_files` (mock or real) |
+| **Dependencies** | a2a_executor (`_agent_parts_message`, `_file_part`, `_data_part`, `_extract_input_parts`) |
+| **Test data** | outbound: bridge result with `output_files=[{url, filename, media_type}]` and a structured data payload. inbound: `message/send` carrying a `FilePart` (url) + a `DataPart` alongside text |
+| **Steps** | 1. Drive a message/task whose backend returns `content` + `output_files`; inspect the emitted A2A `Message.parts`. 2. Send a message with mixed text/file/data parts; inspect the persisted task `input_data`. |
+| **Expected behavior** | Emitted message contains a text Part plus one file Part per `output_files` entry (`url` or `raw`, with `filename`/`media_type`) and a data Part for structured output; streaming path emits files-only at completion (text already streamed). Inbound non-text parts appear under `input_data.input_files` / `input_data.input_data_parts`; text-only messages add neither key. |
+| **Validation points** | output_file_parts_emitted, data_part_emitted, streaming_files_at_completion, inbound_parts_captured, text_only_unchanged |
+| **Cross-system checks** | Persisted task `input_data` matches the parts the client sent |
+
+### INT-018 — Push notification config durability + delivery (Phase 13 C3/C4)
+
+| Field | Value |
+|---|---|
+| **ID** | INT-018 |
+| **Name** | Push config survives restart (both backends) and a webhook is POSTed on state change |
+| **Priority** | P2 |
+| **Type** | end-to-end + database |
+| **CI trigger** | pre-release |
+| **Preconditions** | INT-002 passed; a reachable test webhook receiver; `A2A_PUSH_WEBHOOK_ALLOWLIST` includes its host; run once per `db_backend` (`dynamodb`, `postgresql`) |
+| **Dependencies** | a2a_pushconfig_store (`DurablePushNotificationConfigStore`), a2a_server push_sender, a2a_settings repo (both backends), WebhookUrlValidator |
+| **Test data** | 1 task; 1 allowlisted HTTPS webhook URL; 1 disallowed/private URL |
+| **Steps** | 1. `tasks/pushNotificationConfig/set` an allowlisted webhook → assert an `a2a_settings` row `push_config#{task_id}` persisted. 2. Simulate cold process (new store instance / fresh invocation) and read back via `tasks/pushNotificationConfig/get` and the dispatch path. 3. Drive the task to a terminal state → assert the webhook receiver got an HTTP POST. 4. `set` a disallowed/private-CIDR URL → expect rejection, nothing persisted. 5. `tasks/pushNotificationConfig/delete` → assert the row is removed. |
+| **Expected behavior** | Config is durable across recycle on both backends; cold reads reload from `a2a_settings`; webhook POST fires on state change; SSRF/allowlist violations are rejected on write and never persisted; delete removes the row. |
+| **Validation points** | config_persisted_a2a_settings, cold_read_reloads, webhook_delivered_on_state_change, ssrf_rejected_not_persisted, delete_removes_row, both_backends_pass |
+| **Cross-system checks** | `a2a_settings` row content == config returned by `get`; delivery observed at the receiver matches task terminal state |
+
+### INT-019 — Authenticated extended Agent Card (Phase 13 C5)
+
+| Field | Value |
+|---|---|
+| **ID** | INT-019 |
+| **Name** | `agent/getAuthenticatedExtendedCard` returns more than the public card |
+| **Priority** | P2 |
+| **Type** | API |
+| **CI trigger** | nightly |
+| **Preconditions** | INT-001 passed; `capabilities.extended_agent_card=true` on the card |
+| **Dependencies** | a2a_server (`_build_extended_agent_card`), DefaultRequestHandler extended_agent_card |
+| **Test data** | valid JWT (for the authenticated call) |
+| **Steps** | 1. `GET /.well-known/agent-card.json` (public). 2. `agent/getAuthenticatedExtendedCard` (authenticated). 3. Diff the two cards. |
+| **Expected behavior** | Extended card declares the traceability extension (`https://a2a-protocol.org/extensions/traceability/v1`) in `capabilities.extensions` — absent from the public card — and carries `documentation_url` when `A2A_DOCUMENTATION_URL` is set. It is not a verbatim copy. |
+| **Validation points** | extended_has_traceability_extension, public_lacks_extension, extended_not_verbatim_copy, documentation_url_present_when_set |
+| **Cross-system checks** | none |
+
+### INT-020 — Configurable I/O modes + gateway streaming deviation (Phase 13 C6/C8)
+
+| Field | Value |
+|---|---|
+| **ID** | INT-020 |
+| **Name** | I/O modes reflect settings; gateway `message/stream` is buffered with SSE out-of-band |
+| **Priority** | P2 |
+| **Type** | API + event |
+| **CI trigger** | nightly |
+| **Preconditions** | INT-001 passed; for the streaming leg, the daemon reachable through `silvaengine_gateway` |
+| **Dependencies** | a2a_server (`_setting_list`, `_create_agent_card`), main.py stream collectors, sse_manager |
+| **Test data** | settings `A2A_DEFAULT_OUTPUT_MODES="text, file, application/json"` (CSV); 1 streaming request |
+| **Steps** | 1. Set output modes via CSV env setting; `GET /.well-known/agent-card.json` → assert `defaultOutputModes`. 2. Default (unset) → assert `["text"]`. 3. Through the gateway, `message/stream` → assert one aggregated JSON-RPC response (`status: streaming_complete`, `events: [...]`). 4. Subscribe to `/{ep}/a2a_sse` during the same run → assert live token events arrive there, filtered by `task_id`. |
+| **Expected behavior** | Card advertises exactly the configured modes (CSV or YAML list parsed); default is text-only. Gateway `message/stream` returns an aggregated response, not an open SSE body; live events are delivered on `/{ep}/a2a_sse`. |
+| **Validation points** | modes_from_csv_setting, modes_default_text, gateway_stream_aggregated, sse_live_events_out_of_band |
+| **Cross-system checks** | Aggregated `events` count == live events observed on `/{ep}/a2a_sse` for the run |
+
 ## 8. Failure and Resilience Scenarios
 
 | Scenario | Injected fault | Expected behavior |
@@ -466,6 +566,9 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 | `core_engine_ws_error_frame` | Gateway WebSocket sends `{"type":"error"}` mid-stream | Error chunk emitted; task → `FAILED`; WebSocket closed; registry cleared |
 | `core_engine_no_assistant_msg` | GraphQL `message_list` returns no assistant message after `execute_ask_model` | Task → `FAILED` with "No assistant message found" error |
 | `cancel_after_terminal` | `CancelTask` sent after task already `COMPLETED` | No Hermes stop call / no WebSocket close; response reports task already terminal |
+| `push_disallowed_url` | `tasks/pushNotificationConfig/set` with a disallowed / private-CIDR / non-HTTPS webhook | Rejected with a validation error on write; **nothing persisted** to `a2a_settings`; no delivery attempted |
+| `push_webhook_unreachable` | Allowlisted webhook receiver down when the sender POSTs on state change | Delivery failure is contained (logged); task state unaffected; no daemon crash; config remains for retry/next event |
+| `push_config_cold_process` | Register a push config, then serve the state-change from a fresh process (Lambda recycle) | Durable store reloads the config from `a2a_settings` (both backends); webhook still delivered — config is **not** lost with the process |
 
 ## 9. Data Reconciliation Checks
 
@@ -478,6 +581,8 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 | Tenant isolation | No row with tenant A's PK visible to tenant B query | 0 leaks |
 | Timestamp drift | Task `createdAt` vs DynamoDB row timestamp | 5 seconds |
 | Audit completeness | Every task state transition emitted as an SSE event | 0 missing within buffer |
+| Push config durability | Push config persisted in `a2a_settings` == config returned by `pushNotificationConfig/get` after a cold read (both backends) | 0 mismatches |
+| Multimodal fidelity | Inbound file/data parts persisted to `input_data` == parts the client sent; emitted `output_files` == file Parts on the returned message | 0 dropped |
 
 ## 10. Entry and Exit Criteria
 
@@ -494,7 +599,9 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 - All P1 scenarios (INT-001..008, INT-010, INT-016) pass; INT-012 passes if in scope;
   INT-014 passes if Hermes bridge in scope; INT-015 passes if Core Engine bridge in scope;
   **INT-013 passes when `db_backend=postgresql`**.
-- ≥ 90% of P2 scenarios pass.
+- ≥ 90% of P2 scenarios pass, including the Phase 13 conformance set
+  (INT-017 multimodal Parts, INT-018 push durability+delivery on both backends,
+  INT-019 extended card, INT-020 I/O modes + gateway streaming deviation).
 - Coverage ≥ 80% (`testing_plan.minimum_coverage_threshold`).
 - No blocking defects; reconciliation checks clean (within tolerance).
 - Removed-legacy-surface regression (INT-011) confirms no active legacy handlers.
@@ -507,8 +614,8 @@ Priority: **P1** = must pass to certify. **P2** = should pass. **P3** = nice-to-
 | Trigger | Scope run | Required to pass |
 |---|---|---|
 | On pull request | INT-001, INT-002, INT-003, INT-005, INT-008 (local), INT-010, INT-011, INT-016; **INT-013 (PG) when `db_backend=postgresql`** | yes — blocks merge |
-| Nightly | All P1 + P2 (INT-004, INT-006, INT-007, INT-009, INT-013) + resilience subset + **live report export** | report only |
-| Pre-release | Full suite + failure/resilience (Section 8) + reconciliation (Section 9) + Cognito (if configured) + Phase 10 (if available) + **Hermes bridge (INT-014, if `HERMES_API_URL` set)** + **Core Engine bridge (INT-015, if `CORE_ENGINE_GRAPHQL_URL` set)** + **both backends (dynamodb + postgresql)** + **dated live report with per-call input/output** | yes — blocks release |
+| Nightly | All P1 + P2 (INT-004, INT-006, INT-007, INT-009, INT-013, **INT-017, INT-019, INT-020**) + resilience subset + **live report export** | report only |
+| Pre-release | Full suite + failure/resilience (Section 8) + reconciliation (Section 9) + Cognito (if configured) + Phase 10 (if available) + **Hermes bridge (INT-014, if `HERMES_API_URL` set)** + **Core Engine bridge (INT-015, if `CORE_ENGINE_GRAPHQL_URL` set)** + **Phase 13 conformance (INT-017..020; INT-018 needs a test webhook receiver)** + **both backends (dynamodb + postgresql)** + **dated live report with per-call input/output** | yes — blocks release |
 
 ## 12. Reporting and Certification Expectations
 
@@ -582,8 +689,10 @@ in the PG initiation run are marked `verified`.
 2. **Cognito provider in scope?** Marked `assumed` — confirm if RS256/JWKS
    scenarios must run in pre-release cadence.
 3. **Phase 10 LLM bridge in scope?** INT-012 priority P2 — promote to P1 if
-   the release depends on it. Requires `ai_agent_core_engine` importable +
-   `A2A_AI_AGENT_MODULE`/`A2A_AI_AGENT_CLASS` env vars.
+   the release depends on it. Requires `ai_agent_core_engine` importable and an
+   agent record that resolves a handler via `metadata.module_name`/`class_name`
+   (or the `A2A_AI_AGENT_TYPE` shorthand). The legacy
+   `A2A_AI_AGENT_MODULE`/`A2A_AI_AGENT_CLASS` env-var fallback is **removed**.
 4. **Hermes Agent bridge in scope?** INT-014 priority P2 — promote to P1 if
    the release depends on it. Requires Hermes API Server running at
    `HERMES_API_URL` with `HERMES_API_KEY` set, and a `hermes-agent` record
@@ -612,6 +721,16 @@ in the PG initiation run are marked `verified`.
     capability-style skills (`multi_agent_orchestration`, `agent_registry`,
     `conversational_ai`, `human_in_the_loop`) instead of internal operation
     names. INT-016 validates this on every PR.
+13. **Phase 13 protocol conformance** — `verified` in unit tests
+    (`tests/test_phase13.py`): multimodal Parts (C1/C2), push delivery +
+    durable store on both backends (C3/C4), extended card (C5), interrupt
+    states (C7), configurable modes (C8), and the documented gateway streaming
+    deviation (C6). **Live verification pending** (INT-018 needs a real webhook
+    receiver; INT-017/019/020 confirm shape over the wire). Confirm whether
+    push notifications are in scope for the release gate — if so, INT-018 is
+    P1. New settings: `A2A_PUSH_WEBHOOK_ALLOWLIST` (recommended when push is
+    used), `A2A_PUSH_REQUIRE_HTTPS`, `A2A_DEFAULT_INPUT_MODES`,
+    `A2A_DEFAULT_OUTPUT_MODES`, `A2A_DOCUMENTATION_URL`.
 
 Once you confirm or correct these items, the SOP moves from `draft` to
 `approved` and full (non-subset) Phase 8+ test execution may proceed.

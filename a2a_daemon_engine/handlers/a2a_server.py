@@ -38,6 +38,18 @@ from .config import Config
 
 __author__ = "SilvaEngine Team"
 
+
+def _truthy_setting(value: Any, default: bool = False) -> bool:
+    """Interpret a boolean-like setting value (YAML bool or env string)."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
 # Note: Old A2ADaemonAgentExecutor class has been removed
 # Now using canonical A2ADaemonExecutor from a2a_executor.py
 
@@ -348,16 +360,36 @@ class A2AProtocolServer:
             streaming_manager=self.streaming_manager,
         )
 
-        webhook_allowlist = self.settings.get("a2a_push_webhook_allowlist")
-        require_https = self.settings.get("a2a_push_require_https", True)
-        self.push_config_store = ValidatingPushNotificationConfigStore(
+        webhook_allowlist = self._setting_list(
+            "A2A_PUSH_WEBHOOK_ALLOWLIST", "a2a_push_webhook_allowlist"
+        )
+        require_https = _truthy_setting(
+            self._setting("A2A_PUSH_REQUIRE_HTTPS", "a2a_push_require_https"),
+            default=True,
+        )
+        # Phase 13 (C4): durable, backend-agnostic store (DynamoDB + PostgreSQL)
+        # so push configs survive Lambda/process recycle. Keeps the anti-SSRF
+        # webhook allowlist on the write path.
+        from .a2a_pushconfig_store import DurablePushNotificationConfigStore
+
+        self.push_config_store = DurablePushNotificationConfigStore(
             logger=self.logger,
             webhook_allowlist=webhook_allowlist,
             require_https=bool(require_https),
         )
 
-        self.extended_agent_card = AgentCard()
-        self.extended_agent_card.CopyFrom(self.agent_card)
+        # Phase 13 (C3): wire a push *sender* so registered webhooks actually
+        # receive an HTTP POST on task-state changes. Without this the daemon
+        # stored push configs but never delivered — an over-advertised
+        # capabilities.pushNotifications. The sender fans out over the config
+        # store; the WebhookUrlValidator on the store's write path is the SSRF
+        # gate for URLs that ever reach the sender.
+        self.push_sender = self._build_push_sender(self.push_config_store)
+
+        # Phase 13 (C5): build the authenticated extended card from the
+        # ExtendedAgentCardManager (auth gating, security policies, contact
+        # info) instead of serving a verbatim copy of the public card.
+        self.extended_agent_card = self._build_extended_agent_card()
 
         # Create request handler - routes A2A RPC calls to executor.
         self.request_handler = DefaultRequestHandler(
@@ -365,6 +397,7 @@ class A2AProtocolServer:
             task_store=self.task_store,
             agent_card=self.agent_card,
             push_config_store=self.push_config_store,
+            push_sender=self.push_sender,
             extended_agent_card=self.extended_agent_card,
         )
 
@@ -400,6 +433,115 @@ class A2AProtocolServer:
         self.logger.info(
             f"Agent card available at: {server_url}.well-known/agent-card.json"
         )
+
+    def _setting(self, *keys: str, default: Any = None) -> Any:
+        """First present, non-None settings value across key spellings.
+
+        The gateway supplies UPPERCASE env-mapped keys (e.g.
+        ``A2A_PUSH_WEBHOOK_ALLOWLIST``); a lowercase spelling is also accepted so
+        the same code works with direct/programmatic settings.
+        """
+        for key in keys:
+            value = self.settings.get(key)
+            if value is not None:
+                return value
+        return default
+
+    def _setting_list(self, *keys: str) -> list[str] | None:
+        """Read a list-valued setting; accept a YAML list or a CSV string.
+
+        Env-sourced settings arrive as comma-separated strings; YAML settings as
+        native lists. Returns ``None`` when unset so callers can apply defaults.
+        """
+        value = self._setting(*keys)
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple)):
+            return [str(v).strip() for v in value if str(v).strip()]
+        if isinstance(value, str):
+            return [v.strip() for v in value.split(",") if v.strip()]
+        return [str(value)]
+
+    def _build_push_sender(self, config_store: Any) -> Any | None:
+        """Build an SDK push-notification sender (Phase 13, C3).
+
+        Returns ``None`` (delivery disabled) if httpx or the SDK sender is
+        unavailable, so a missing dependency degrades gracefully rather than
+        breaking server startup. The webhook allowlist is enforced on the
+        config-store write path, so only vetted URLs ever reach the sender.
+        """
+        try:
+            import httpx
+
+            from a2a.server.tasks import BasePushNotificationSender
+
+            client = httpx.AsyncClient(timeout=10.0)
+            # Keep a handle so the client can be closed on shutdown.
+            self._push_httpx_client = client
+            return BasePushNotificationSender(
+                httpx_client=client, config_store=config_store
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"Push notification sender unavailable ({e}); webhooks will not "
+                "be delivered."
+            )
+            return None
+
+    def _build_extended_agent_card(self) -> Any:
+        """Build the authenticated extended Agent Card (Phase 13, C5).
+
+        Enriches a copy of the public card with the ``ExtendedAgentCardManager``
+        metadata projected onto SDK-native fields — extension declarations
+        (Traceability) and a documentation/policy URL — so
+        ``agent/getAuthenticatedExtendedCard`` returns strictly more than the
+        public card instead of a verbatim copy.
+        """
+        card = AgentCard()
+        card.CopyFrom(self.agent_card)
+        try:
+            from a2a.types import AgentExtension
+
+            from .a2a_extended_card import TraceabilityExtension
+
+            # Traceability extension (Phase 8) — declared only on the extended,
+            # authenticated card, so it is absent from the public card.
+            trace = getattr(
+                self.extended_card_manager,
+                "traceability_extension",
+                None,
+            ) or TraceabilityExtension()
+            extension = AgentExtension(
+                uri="https://a2a-protocol.org/extensions/traceability/v1",
+                description="End-to-end trace ID propagation across agent hops.",
+                required=False,
+            )
+            try:
+                extension.params.update(
+                    {
+                        "traceHeader": trace.trace_header,
+                        "spanHeader": trace.span_header,
+                        "sampleRate": trace.sample_rate,
+                    }
+                )
+            except Exception:  # pragma: no cover - params Struct unavailable
+                pass
+            card.capabilities.extensions.append(extension)
+
+            # Documentation / policy URL for authenticated consumers.
+            docs_url = self._setting(
+                "A2A_TERMS_OF_SERVICE_URL",
+                "a2a_terms_of_service_url",
+                "A2A_DOCUMENTATION_URL",
+                "a2a_documentation_url",
+            )
+            if docs_url and not card.documentation_url:
+                card.documentation_url = str(docs_url)
+        except Exception as e:
+            self.logger.warning(
+                f"Extended agent card enrichment failed ({e}); serving base card."
+            )
+        return card
 
     def _create_agent_skills(self, capability_list: list[str]) -> list[Any]:
         """
@@ -545,6 +687,18 @@ class A2AProtocolServer:
             url="https://github.com/ideabosque/a2a_daemon_engine",
         )
 
+        # Input/output modes — text by default so the card stays honest, but
+        # configurable (Phase 13, C8) so a deployment whose backend returns
+        # files/structured data can advertise e.g. "file", "application/json".
+        default_input_modes = (
+            self._setting_list("A2A_DEFAULT_INPUT_MODES", "a2a_default_input_modes")
+            or ["text"]
+        )
+        default_output_modes = (
+            self._setting_list("A2A_DEFAULT_OUTPUT_MODES", "a2a_default_output_modes")
+            or ["text"]
+        )
+
         # Create AgentCard
         agent_card = AgentCard(
             name=name,
@@ -557,8 +711,8 @@ class A2AProtocolServer:
                 )
             ],
             version=version,
-            default_input_modes=["text"],
-            default_output_modes=["text"],
+            default_input_modes=list(default_input_modes),
+            default_output_modes=list(default_output_modes),
             capabilities=capabilities,
             skills=skills,
             provider=provider,
