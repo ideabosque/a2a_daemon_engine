@@ -198,6 +198,43 @@ the streaming drain loop.
 Injectable transports for testing: `ws_connect` factory + `graphql_client`
 (httpx client with `MockTransport`).
 
+### A2A Proxy Handler
+
+When `agent_type` = `a2a_proxy` (or `module_name` =
+`a2a_daemon_engine.handlers.a2a_a2a_proxy_handler` and `class_name` =
+`A2AProxyHandler`), the Phase 14 bridge forwards A2A requests **directly** to
+any A2A-compliant backend — no protocol translation. Targets include Hermes
+Agent's A2A server (`:9900`), LangChain, CrewAI, and Google ADK agents.
+
+Per-agent metadata keys (stored in the agent record's `metadata` JSON —
+**metadata only; there are no global env-var fallbacks** since each agent
+proxies to its own backend):
+- `a2a_proxy_url` — Backend's A2A endpoint URL, e.g. `http://hermes-host:9900` *(required)*
+- `a2a_proxy_token` — Bearer token for backend A2A auth
+- `a2a_proxy_timeout` — Request/stream timeout in seconds (default: `120`)
+
+**Non-streaming path** (`SendMessage`): `POST {a2a_proxy_url}/` with an A2A
+`SendMessage` JSON-RPC envelope. Parses the `Message` or `Task` result and
+extracts text from `Parts` — no message conversion.
+
+**Streaming path** (`SendStreamingMessage`): `POST {a2a_proxy_url}/` and
+drains the A2A SSE stream. A2A frames are JSON-RPC envelopes:
+- `result.message` → extract text `Parts` → `token` chunks
+- `result.task` with `COMPLETED` → extract final artifacts → done
+- `result.task` with `INPUT_REQUIRED` → `approval` chunk (INPUT_REQUIRED passthrough)
+- `result.task` with `FAILED` → `error` chunk
+- `result.error` → `error` chunk
+
+**Cancel passthrough** — `cancel_run()` forwards an A2A `CancelTask`
+JSON-RPC to the backend.
+
+**Approval passthrough** — `resolve_approval()` sends a continuation
+`SendMessage` with the same `contextId` containing the approval response
+(A2A multi-turn is the native approval mechanism).
+
+Injectable transports for testing: `http_transport` (httpx client with
+`MockTransport`).
+
 ### Tests layout
 
 - Phase 6 / 8 / 9 tests live in `tests/test_phase6.py`, `tests/test_phase8.py`, `tests/test_phase9.py`. There is no `test_phase7.py`; SSE / streaming coverage is consolidated into `test_phase8.py`.
