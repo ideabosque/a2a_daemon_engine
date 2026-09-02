@@ -249,22 +249,37 @@ Test file: `tests/test_phase9.py`
 
 ## Current State
 
-The daemon now uses the SDK Starlette application as the only HTTP A2A
-protocol surface:
+The daemon has two supported operating shapes:
 
-- `GET /.well-known/agent-card.json`
-- `POST /` (JSON-RPC compatibility endpoint: `message/send`, `tasks/get`, `tasks/cancel`)
-- `POST /v1` (SDK native JSON-RPC dispatcher: `SendMessage`, `GetTask`, `CancelTask`)
-- `GET /tasks/{task_id}/stream`
+1. **Standalone HTTP daemon** — the SDK Starlette app owns the public A2A
+   protocol surface:
+   - `GET /.well-known/agent-card.json`
+   - `POST /` for slash-style JSON-RPC compatibility methods
+   - `POST /v1` for the SDK dispatcher and native v1 method names
+   - `GET /tasks/{task_id}/stream` for task SSE replay/subscription
 
-The FastAPI app mounted at `/rest` is limited to operations endpoints:
+2. **Gateway-dispatched daemon** — `silvaengine_gateway` invokes module-level
+   dispatch functions:
+   - `POST /{endpoint_id}/a2a` -> `dispatch_a2a()`
+   - `GET /{endpoint_id}/.well-known/agent-card.json` -> `dispatch_agent_card()`
+   - `POST /{endpoint_id}/a2a_core_graphql` -> `dispatch_graphql()`
+   - `POST /{endpoint_id}/a2a_sse` -> `dispatch_sse_message()` where configured
+
+The gateway/serverless JSON-RPC dispatch now routes the A2A method table needed
+for compliance: `message/send`, `message/stream`, `message/sendStream`,
+`tasks/get`, `tasks/list`, `tasks/cancel`, `tasks/resubscribe`,
+`tasks/subscribe`, push-notification config create/get/list/delete aliases, and
+authenticated extended-card aliases.
+
+The FastAPI app mounted at `/rest` remains operations-only:
 
 - `GET /rest/health`
 - `GET /rest/me`
 - `GET /rest/{endpoint_id}`
 - `POST /rest/{endpoint_id}/a2a_core_graphql`
+- `POST /rest/auth/token`
 
-Removed protocol surfaces:
+Removed protocol surfaces that should not be reintroduced:
 
 - `/rest/a2a-jsonrpc`
 - `/rest/a2a/{endpoint_id}/...`
@@ -272,26 +287,25 @@ Removed protocol surfaces:
 - `handlers/a2a_sdk_compat.py`
 - direct `action=...` dispatch through `A2ADaemonEngine.a2a()`
 - lowercase/pre-v1 task-state fallback helpers
-
 ## Implementation Notes
 
 | Area | Status | Notes |
 | --- | --- | --- |
 | SDK app as primary HTTP app | Done | `main.py` mounts the SDK app at root and the operations app under `/rest`. |
-| Agent Card | Done | `a2a_server.py` advertises protocol version `1.0.0`. |
-| JSON-RPC protocol | Done | Slash-style compatibility JSON-RPC is served at `/`; native SDK JSON-RPC is served at `/v1`; serverless JSON-RPC dispatch remains available through `A2ADaemonEngine.a2a(**event)`. |
-| Task state handling | Done | Internal helpers now resolve v1 uppercase state names only. |
-| Task persistence | Done | `DynamoDBA2ATaskStore` implements SDK task-store methods and maps persisted states to v1 names. |
-| Operations API | Done | `/rest` exposes health, identity, endpoint info, and GraphQL only. |
-| gRPC adapter | Experimental | JSON-over-gRPC remains available for transport experimentation. |
-| SSE infra fixes | Done | `a2a_sse.py` now skips the `None` sentinel, emits idle keep-alive comments, supports TTL cleanup for stale buffers, and registers routes through `app.add_route()` when available. |
-| Dual event paths unconnected | Phase 10 | `SSEEventQueue` and SDK `EventQueue` are still parallel paths. Phase 10 streaming bridge must feed both; the SSE endpoint is now ready for `SubscribeToTask` reconnection traffic. |
-| AI engine integration (non-streaming) | Phase 10 | Gateway-mediated GraphQL bridge to invoke `ai_agent_core_engine` `ask_model` for `SendMessage` requests with full persistence. |
-| AI engine integration (streaming) | Phase 10 | Gateway-mediated WebSocket bridge using `threading.Queue` to emit chunks to both SDK `EventQueue` and `SSEEventQueue`. |
+| Agent Card | Done | Standalone mode serves `/.well-known/agent-card.json`; gateway mode exposes `dispatch_agent_card()` and rewrites the advertised JSON-RPC URL per endpoint. |
+| JSON-RPC protocol | Done | Slash-style compatibility JSON-RPC is served at `/`; native SDK JSON-RPC is served at `/v1`; gateway/serverless dispatch routes send, stream, get, list, cancel, resubscribe, push-config CRUD, and extended-card methods. |
+| Task state handling | Done | Internal helpers resolve v1 uppercase state names and support `INPUT_REQUIRED`, `AUTH_REQUIRED`, `REJECTED`, cancellation, and failure states. |
+| Task persistence | Done | `DynamoDBA2ATaskStore` implements SDK task-store methods and maps persisted states to v1 names; PostgreSQL support is available through the repository layer where configured. |
+| Operations API | Done | `/rest` exposes health, identity, endpoint info, auth token, and GraphQL only. |
+| gRPC adapter | Experimental | JSON-over-gRPC remains available for transport experimentation, not the baseline compliance path. |
+| SSE infra fixes | Done | `a2a_sse.py` skips the `None` sentinel, emits idle keep-alive comments, supports TTL cleanup for stale buffers, and registers routes through `app.add_route()` when available. |
+| Dual event paths | Done | Phase 10/13 bridge paths feed both SDK `EventQueue` and `SSEEventQueue`; gateway streaming still has a documented buffered-RPC deviation with live updates on `/a2a_sse`. |
+| AI engine integration (non-streaming) | Implemented; live verification pending | Gateway-mediated GraphQL bridge invokes `ai_agent_core_engine` `ask_model` for `SendMessage` requests with persistence. |
+| AI engine integration (streaming) | Implemented; live verification pending | Gateway-mediated WebSocket bridge uses `threading.Queue` to emit chunks to both SDK `EventQueue` and `SSEEventQueue`. |
 
 ## Phase 10: Gateway-Mediated ai_agent_core_engine Integration
 
-**Status:** In Progress — `CoreEngineAgentHandler` implemented (10.1, 10.4, 10.5 complete)
+**Status:** Implemented; live gateway verification pending
 
 ### Motivation
 
@@ -585,15 +599,15 @@ blockers.
 | 7 | Streaming and multi-turn (SSE, INPUT_REQUIRED, AUTH_REQUIRED, push config) | Complete | `a2a_sse.py`, `a2a_pushconfig.py`, `a2a_executor.py` |
 | 8 | Production hardening (extended cards, telemetry, TCK, security) | Complete | `a2a_extended_card.py`, `a2a_telemetry.py`, `a2a_tck_checker.py` |
 | 9 | Advanced extensions (gRPC, subscriptions, health, rate limit, cancellation, passport, cost) | Complete | `a2a_grpc.py`, `a2a_graphql_subscriptions.py`, `a2a_health_monitor.py`, `a2a_rate_limiter.py`, `a2a_cancellation.py`, `a2a_secure_passport.py`, `a2a_cost_extension.py` |
-| 10 | Gateway-mediated ai_agent_core_engine integration (GraphQL non-streaming + WebSocket streaming, dual-path emission, SSE client-facing) | In Progress | `a2a_core_engine_handler.py` (new), `a2a_ai_agent_utility.py`, `a2a_executor.py`, `config.py`, `AGENTS.md`, `tests/test_phase10.py`, `tests/test_core_engine_handler.py` |
-| 11 | A2A protocol compliance through the gateway (Agent Card discovery + the 8 unrouted JSON-RPC methods) | Planned | `main.py`, `a2a_server.py`, `routes.yaml`, `a2a_extended_card.py`, `a2a_pushconfig.py` — see [`A2A_PROTOCOL_COMPLIANCE_PLAN.md`](A2A_PROTOCOL_COMPLIANCE_PLAN.md) |
+| 10 | Gateway-mediated ai_agent_core_engine integration (GraphQL non-streaming + WebSocket streaming, dual-path emission, SSE client-facing) | Implemented; live gateway verification pending | `a2a_core_engine_handler.py` (new), `a2a_ai_agent_utility.py`, `a2a_executor.py`, `config.py`, `AGENTS.md`, `tests/test_phase10.py`, `tests/test_core_engine_handler.py` |
+| 11 | A2A protocol compliance through the gateway (Agent Card discovery + expanded JSON-RPC routing) | Implemented in code; live gateway verification pending | `main.py`, `a2a_server.py`, `a2a_extended_card.py`, `a2a_pushconfig.py`, `a2a_pushconfig_store.py`, `tests/test_a2a_protocol_compliance.py` - see [`A2A_PROTOCOL_COMPLIANCE_PLAN.md`](A2A_PROTOCOL_COMPLIANCE_PLAN.md) |
 | 12 | Conversation grouping via contextId (add context_id + role to a2a_messages, persist user message, simplify history query) | Complete | `models/a2a_message.py`, `a2a_core.py`, `a2a_ai_agent_utility.py`, `migration/alembic/versions/0006_add_context_id_to_messages.py` |
-| 13 | Protocol conformance audit — remaining spec gaps (multimodal Parts, push delivery + durable store, extended-card wiring, streaming deviation) | In Progress — C1–C8 implemented; live verification pending | `a2a_executor.py`, `a2a_ai_agent_utility.py`, `a2a_server.py`, `a2a_pushconfig_store.py`, `main.py`, `A2A_ARCHITECTURE.md`, `tests/test_phase13.py` — see §Phase 13 |
-| 14 | A2A-native proxy handler — forward A2A requests to external A2A-compliant agents (Hermes Agent, LangChain, CrewAI, Google ADK) without protocol translation | Planned | `a2a_a2a_proxy_handler.py` (new), `a2a_ai_agent_utility.py`, `config.py`, `AGENTS.md`, `tests/test_a2a_proxy_handler.py` |
+| 13 | Protocol conformance audit - remaining spec gaps (multimodal Parts, push delivery + durable store, extended-card wiring, streaming deviation) | Implemented in code; live gateway verification and C2 backend forwarding pending | `a2a_executor.py`, `a2a_ai_agent_utility.py`, `a2a_server.py`, `a2a_pushconfig_store.py`, `main.py`, `A2A_ARCHITECTURE.md`, `tests/test_phase13.py` - see Phase 13 |
+| 14 | A2A-native proxy handler - forward A2A requests to external A2A-compliant agents without protocol translation | Planned - mapping is staged, but handler/tests/config are not implemented yet | `a2a_ai_agent_utility.py` (mapping only), `a2a_a2a_proxy_handler.py` (planned), `config.py` (planned), `tests/test_a2a_proxy_handler.py` (planned) |
 
 ## Phase 12: Conversation Grouping via contextId
 
-**Status:** Planned
+**Status:** Complete
 
 ### Motivation
 
@@ -637,22 +651,20 @@ This works but has gaps:
 
 ## Phase 13: Protocol Conformance Audit
 
-**Status:** In Progress — C1–C8 implemented; live verification pending
+**Status:** Implemented in code; live gateway verification and C2 backend forwarding pending
 **Date:** 2026-09-02
 
 ### Motivation
 
-Phases 1–12 built out the method surface, Agent Card discovery, task states, and
-conversation grouping. A fresh audit against the published A2A specification
-(<https://a2a-protocol.org/latest/specification/>, v1.0), cross-checked against
-the installed SDK and the actual code paths, found the method table and task-state
-map are now spec-aligned, but a set of **data-plane and capability-advertisement
-gaps** remain. Several are worse than "not implemented": the Agent Card advertises
-capabilities the code does not deliver, which is a conformance failure (a client
-that trusts the card will call a feature that silently does nothing).
+Phases 1-12 built out the method surface, Agent Card discovery, task states, and
+conversation grouping. A Phase 13 audit against the A2A v1.0 specification,
+cross-checked against the installed SDK and the actual code paths, found that the
+method table and task-state map were spec-aligned, but several data-plane and
+capability-advertisement gaps still needed closure.
 
-This phase closes those gaps. It is scoped to the gateway-reachable surface, the
-same as Phase 11.
+Those gaps are now implemented in code, with two tracked follow-ups: live gateway
+verification and backend-specific forwarding for inbound non-text parts. This
+phase remains scoped to the gateway-reachable surface, the same as Phase 11.
 
 ### What is already conformant (no action)
 
@@ -664,7 +676,9 @@ same as Phase 11.
 | v0.3 ⇄ v1.0 method-name aliases accepted | `main.py:257,275-336` |
 | Webhook allowlist (anti-SSRF) enforced on push-config writes | `a2a_server.py:45-73` |
 
-### Gaps (audit findings)
+### Original Audit Findings (Closed or Tracked)
+
+The table below records the gaps found at the start of Phase 13. The current implementation status is captured in the Implementation Result section.
 
 | ID | Gap | Severity | Evidence |
 | --- | --- | --- | --- |
@@ -784,83 +798,79 @@ Still pending:
 
 ## Phase 14: A2A-Native Proxy Handler
 
-**Status:** Planned
+**Status:** Planned - `AGENT_TYPE_MAP` contains a staged `a2a_proxy` entry, but the handler, config fields, tests, and live E2E validation are not implemented yet.
+
+### Current Checkout Status
+
+- `a2a_ai_agent_utility.py` already maps `agent_type: "a2a_proxy"` to `a2a_daemon_engine.handlers.a2a_a2a_proxy_handler.A2AProxyHandler`.
+- `handlers/a2a_a2a_proxy_handler.py` does not exist yet.
+- `tests/test_a2a_proxy_handler.py` does not exist yet.
+- `A2A_PROXY_*` settings are not wired in `Config` yet.
+- Do not register production agents with `agent_type: "a2a_proxy"` until 14.1, 14.3, 14.8, and 14.9 are complete. In the current checkout, that selection resolves to a missing module and will fail at import time.
 
 ### Motivation
 
-Hermes Agent (v0.21+) now has native A2A protocol support — it serves an
-Agent Card, accepts `SendMessage` / `SendStreamingMessage` / `GetTask` /
-`CancelTask` / `SubscribeToTask`, supports SSE streaming, push notifications,
-and `contextId`-based multi-turn conversations. Other frameworks (LangChain,
-CrewAI, Google ADK) also implement A2A natively via the `a2a-sdk`.
+For Hermes Agent builds or other backends that expose a native A2A endpoint, the daemon should not translate A2A requests into a backend-specific protocol and then translate the response back again. It can act as a thin A2A-to-A2A proxy: preserve the client `Message`, `Parts`, `contextId`, task state, and streaming events, while still applying daemon-owned auth, tenant routing, persistence, task tracking, and observability.
 
-The current bridge handlers (`HermesAgentHandler`, `CoreEngineAgentHandler`,
-`OpenClawAgentHandler`) translate A2A requests into each backend's native
-protocol (OpenAI-compatible HTTP, gateway GraphQL/WebSocket). For A2A-compliant
-backends, this translation is unnecessary — the daemon can **proxy** A2A
-requests directly, forwarding the protocol message to the backend's A2A
-endpoint without converting between protocols.
+This differs from the existing bridge handlers:
+
+- `HermesAgentHandler` translates to a Hermes/OpenAI-compatible HTTP + SSE API.
+- `CoreEngineAgentHandler` translates to `silvaengine_gateway` GraphQL and WebSocket calls.
+- `OpenClawAgentHandler` translates to the OpenClaw HTTP API.
+- `A2AProxyHandler` should forward A2A JSON-RPC and A2A SSE events to another A2A-compliant backend.
 
 Benefits:
-- **No protocol translation** — A2A `Message` with `Parts` flows through
-  unchanged; no `_to_openai_messages()` conversion, no SSE frame parsing
-- **Native reasoning token support** — A2A `TaskStatusUpdateEvent` and
-  `Message` parts carry structured data; no manual `rs#` marker parsing
-- **Native INPUT_REQUIRED** — A2A `TaskState.INPUT_REQUIRED` is first-class;
-  no `hermes.approval_required` event parsing or `POST /v1/runs/{id}/approval`
-  translation
-- **Native cancel** — A2A `CancelTask` maps directly to the backend's
-  `CancelTask`; no `POST /v1/runs/{id}/stop` translation
-- **Less code** — the proxy is a thin HTTP/SSE forwarder, not a protocol
-  translator
+
+- Preserve multimodal A2A `Parts` without custom conversion.
+- Preserve native A2A task states such as `INPUT_REQUIRED`, `AUTH_REQUIRED`, `CANCELED`, and `REJECTED`.
+- Use A2A `CancelTask` and continuation messages instead of backend-specific stop/approval endpoints.
+- Reduce handler-specific parsing for reasoning, tool, file, and structured-data events.
+- Keep the daemon as the policy and persistence boundary while letting the backend own model execution.
 
 ### Architecture
 
-```
+```text
 A2A Client
-    │
-    ▼ POST /{ep}/a2a  (SendMessage | SendStreamingMessage)
+    |
+    v POST /{ep}/a2a  (SendMessage | SendStreamingMessage)
 A2ADaemonExecutor
-    │
-    ▼ resolve_agent(agent_uuid) → metadata.agent_type = "a2a_proxy"
+    |
+    v resolve_agent(agent_uuid) -> metadata.agent_type = "a2a_proxy"
 A2AProxyHandler
-    │
-    ├── Non-streaming → POST {backend_a2a_url}/  (SendMessage)
-    │       └── Backend returns A2A Message → daemon persists → returns to client
-    │
-    └── Streaming → POST {backend_a2a_url}/  (SendStreamingMessage)
-            └── Backend streams A2A SSE events → daemon forwards to client SSE
-                    └── TaskStatusUpdateEvent (INPUT_REQUIRED, WORKING, COMPLETED)
-                        and Message parts (text, reasoning, file) flow through
+    |
+    +-- Non-streaming -> POST {backend_a2a_url}/  (SendMessage)
+    |       +-- Backend returns A2A Message -> daemon persists -> returns to client
+    |
+    +-- Streaming -> POST {backend_a2a_url}/  (SendStreamingMessage)
+            +-- Backend streams A2A SSE events -> daemon drain loop
+                    +-- SDK EventQueue + SSEEventQueue receive the same task/artifact events
 ```
 
 ### Handler Plugin Contract
 
-The new `A2AProxyHandler` (`handlers/a2a_a2a_proxy_handler.py`) implements
-the same narrow bridge contract:
+The planned `A2AProxyHandler` (`handlers/a2a_a2a_proxy_handler.py`) should implement the same narrow bridge contract used by the existing Phase 10 handlers:
 
-- `__init__(logger, agent_config, setting, context, http_transport=None)` —
-  injectable `http_transport` for test mocking
-- `ask_model(input_messages, context, stream_queue=None, stream_event=None)` —
-  forwards A2A `SendMessage` or `SendStreamingMessage` to the backend's A2A
-  endpoint; drains A2A SSE events into `stream_queue` for streaming
-- `cancel_run(run_id)` — forwards A2A `CancelTask` to the backend
-- `resolve_approval(run_id, approved, reason)` — forwards a `SendMessage` with
-  approval metadata to the backend (A2A `INPUT_REQUIRED` continuation)
+- `__init__(logger, agent_config, setting, context, http_transport=None)` - initialize config and allow injectable HTTP/SSE transport for tests.
+- `ask_model(input_messages, context, stream_queue=None, stream_event=None)` - forward A2A `SendMessage` or `SendStreamingMessage` to the backend endpoint; drain backend A2A SSE events into `stream_queue` for streaming calls.
+- `cancel_run(run_id)` - forward A2A `CancelTask` to the backend.
+- `resolve_approval(run_id, approved, reason)` - send an A2A continuation `SendMessage` using the same `contextId` and approval metadata.
 
-Selection is per-agent via `agent_type`:
+Selection remains per-agent via metadata:
 
-```
+```yaml
 agent_type: "a2a_proxy"
 ```
 
-`AGENT_TYPE_MAP` entry:
+The map entry is already present, but it should be treated as staged until the handler lands:
 
-| `agent_type` | module | class |
-|---|---|---|
-| `a2a_proxy` | `a2a_daemon_engine.handlers.a2a_a2a_proxy_handler` | `A2AProxyHandler` |
+| `agent_type` | module | class | Current status |
+|---|---|---|---|
+| `a2a_proxy` | `a2a_daemon_engine.handlers.a2a_a2a_proxy_handler` | `A2AProxyHandler` | Mapping exists; target module missing |
 
 ### Per-Agent Metadata
+
+Proxy connection details live in **per-agent metadata only** — there are no
+global env-var fallbacks, since each agent proxies to its own backend.
 
 | Key | Description | Default |
 |-----|-------------|---------|
@@ -869,104 +879,75 @@ agent_type: "a2a_proxy"
 | `a2a_proxy_timeout` | Request/stream timeout in seconds | `120` |
 | `a2a_proxy_agent_name` | Backend agent name (for discovery/logging) | *(from agent record)* |
 
-Global fallbacks (env vars):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `A2A_PROXY_URL` | — | Default backend A2A URL |
-| `A2A_PROXY_TOKEN` | — | Default bearer token |
-| `A2A_PROXY_TIMEOUT` | `120` | Default timeout |
-
 ### A2A Protocol Forwarding
 
 #### Non-streaming (`SendMessage`)
 
-1. Build an A2A `SendMessage` JSON-RPC request with the client's `Message`
-   (parts, role, contextId, metadata)
-2. `POST {a2a_proxy_url}/` with the JSON-RPC envelope
-3. Parse the JSON-RPC response — extract the `Message` result
-4. Return `{content, role, message_id, metadata}` to the bridge
-
-No message conversion — the A2A `Parts` (text, file, data) flow through
-unchanged. The daemon persists the user message and agent response with
-`context_id` as usual.
+1. Build a JSON-RPC `SendMessage` request with the client's `Message` fields preserved: `parts`, `role`, `contextId`, and `metadata`.
+2. `POST {a2a_proxy_url}/` with the JSON-RPC envelope and backend auth headers.
+3. Parse the JSON-RPC response and normalize the returned A2A `Message` or `Task` into the bridge result shape.
+4. Let the existing daemon persistence path store the user message and agent response under the same `context_id`.
 
 #### Streaming (`SendStreamingMessage`)
 
-1. Build an A2A `SendStreamingMessage` JSON-RPC request
-2. `POST {a2a_proxy_url}/` with `stream=true` — open an SSE connection
-3. Drain A2A SSE events:
-   - `TaskStatusUpdateEvent` with `WORKING` → forward as status
-   - `Message` with `Parts` → extract text → put `{"name": "token", "value": text}` into `stream_queue`
-   - `TaskStatusUpdateEvent` with `INPUT_REQUIRED` → put `{"name": "approval", "value": ...}` into `stream_queue`
-   - `TaskStatusUpdateEvent` with `COMPLETED` → set `stream_event`
-   - `TaskStatusUpdateEvent` with `FAILED` → put `{"name": "error", "value": ...}` into `stream_queue`
-4. The daemon's existing drain loop handles dual-path emission (SDK EventQueue + SSE)
-
-No manual reasoning token parsing — A2A `Parts` with `data_kind` or metadata
-tags flow through as-is. The daemon's SSE emission already forwards metadata
-on artifacts, so reasoning tokens are tagged natively.
+1. Build a JSON-RPC `SendStreamingMessage` request with the original A2A message and metadata.
+2. Open the backend SSE response from `POST {a2a_proxy_url}/`.
+3. Drain backend A2A SSE events:
+   - `TaskStatusUpdateEvent(WORKING)` -> progress/status chunk.
+   - `TaskArtifactUpdateEvent` or message text part -> token/artifact chunk.
+   - `TaskStatusUpdateEvent(INPUT_REQUIRED)` -> approval/input-required chunk.
+   - `TaskStatusUpdateEvent(AUTH_REQUIRED)` -> auth-required chunk.
+   - `TaskStatusUpdateEvent(COMPLETED)` -> set `stream_event`.
+   - `TaskStatusUpdateEvent(FAILED | REJECTED | CANCELED)` -> terminal error/status chunk.
+4. Reuse the existing bridge drain loop so SDK `EventQueue` and `SSEEventQueue` receive consistent client-facing events.
 
 #### Cancel (`CancelTask`)
 
-1. Build an A2A `CancelTask` JSON-RPC request with the `task_id`
-2. `POST {a2a_proxy_url}/` with the JSON-RPC envelope
-3. Return success/failure
+1. Build an A2A `CancelTask` JSON-RPC request using the daemon task id or mapped backend task id.
+2. `POST {a2a_proxy_url}/` with the JSON-RPC envelope.
+3. Return success/failure and let the daemon task store record the cancellation state.
 
-No `POST /v1/runs/{id}/stop` translation — A2A `CancelTask` is the native
-cancel mechanism.
+#### Approval / Input Continuation
 
-#### Approval (`INPUT_REQUIRED` continuation)
-
-1. When the backend emits `INPUT_REQUIRED`, the daemon's drain loop already
-   emits `INPUT_REQUIRED` to the A2A client and stores `pending_approval`
-2. When the client sends an approval response (`operation: "approval_response"`),
-   the executor calls `handler.resolve_approval(run_id, approved, reason)`
-3. The handler sends a `SendMessage` to the backend with the approval as the
-   user message and the same `contextId` — the backend continues the
-   conversation
-
-No `POST /v1/runs/{id}/approval` translation — A2A multi-turn continuation
-is the native approval mechanism.
+1. When the backend emits `INPUT_REQUIRED`, the daemon emits `INPUT_REQUIRED` to the client and stores pending approval/input metadata.
+2. When the client sends an approval response (`operation: "approval_response"`), the executor calls `handler.resolve_approval(run_id, approved, reason)`.
+3. The proxy sends a continuation `SendMessage` with the same `contextId` and approval metadata so the backend can resume the task.
 
 ### Tasks
 
-| Task | Description |
-|------|-------------|
-| 14.1 | Create `a2a_a2a_proxy_handler.py` with `A2AProxyHandler` |
-| 14.2 | Add `a2a_proxy` to `AGENT_TYPE_MAP` in `a2a_ai_agent_utility.py` |
-| 14.3 | Add `A2A_PROXY_*` config fields to `Config` and `_set_parameters` |
-| 14.4 | Implement non-streaming: forward `SendMessage` JSON-RPC to backend |
-| 14.5 | Implement streaming: forward `SendStreamingMessage` + drain A2A SSE events into `stream_queue` |
-| 14.6 | Implement `cancel_run`: forward `CancelTask` JSON-RPC to backend |
-| 14.7 | Implement `resolve_approval`: send continuation `SendMessage` with approval |
-| 14.8 | Write unit tests (`test_a2a_proxy_handler.py`) with mocked A2A backend |
-| 14.9 | Write live E2E test against a running Hermes A2A server (port 9900) |
-| 14.10 | Update `AGENTS.md`, `README.md`, `settings.yaml`, `.env.example` |
+| Task | Description | Status |
+|------|-------------|--------|
+| 14.1 | Create `a2a_a2a_proxy_handler.py` with `A2AProxyHandler` | Planned |
+| 14.2 | Add `a2a_proxy` to `AGENT_TYPE_MAP` in `a2a_ai_agent_utility.py` | Partially done - mapping exists, target module missing |
+| 14.3 | Add `A2A_PROXY_*` config fields to `Config` and `_set_parameters` | Planned |
+| 14.4 | Implement non-streaming: forward `SendMessage` JSON-RPC to backend | Planned |
+| 14.5 | Implement streaming: forward `SendStreamingMessage` and drain A2A SSE events into `stream_queue` | Planned |
+| 14.6 | Implement `cancel_run`: forward `CancelTask` JSON-RPC to backend | Planned |
+| 14.7 | Implement `resolve_approval`: send continuation `SendMessage` with approval metadata | Planned |
+| 14.8 | Write unit tests (`test_a2a_proxy_handler.py`) with mocked A2A backend | Planned |
+| 14.9 | Write live E2E test against a running A2A backend such as Hermes A2A | Planned |
+| 14.10 | Update `AGENTS.md`, `README.md`, `settings.yaml`, and `.env.example` | Planned |
 
 ### Design Decisions
 
 | Decision | Rationale |
 |----------|-----------|
-| Proxy, not translate | Both sides speak A2A natively; no protocol conversion needed |
-| Keep daemon-owned persistence | The daemon persists user + agent messages with `context_id` in its own DB for unified conversation history across all backends |
-| Keep daemon-owned SSE streaming | The daemon's dual-path emission (SDK EventQueue + SSE broadcast) is the client-facing streaming surface; the backend's SSE is the daemon-to-backend leg only |
-| Keep daemon-owned task store | The daemon's `a2a_tasks` table is the protocol-level task record; the backend's task store is its own internal state |
-| Reuse existing drain loop | The `stream_queue` / `stream_event` contract is already generic; the proxy handler just feeds A2A SSE events as chunks |
-| Support `contextId` passthrough | The daemon forwards the client's `contextId` to the backend so multi-turn conversations work end-to-end |
-| `agent_type: "a2a_proxy"` in `AGENT_TYPE_MAP` | Same selection mechanism as all other handlers; no executor changes |
+| Proxy, not translate | Both sides speak A2A natively, so preserving protocol messages is simpler and less lossy than converting them to a backend-specific API. |
+| Keep daemon-owned persistence | The daemon persists user and agent messages with `context_id` for unified conversation history across all backend types. |
+| Keep daemon-owned SSE fanout | Backend SSE is the daemon-to-backend leg; the daemon still owns SDK `EventQueue` and `SSEEventQueue` delivery to clients. |
+| Keep daemon-owned task store | The daemon task is the client-visible protocol record; the backend task/run id is implementation metadata. |
+| Reuse the existing drain loop | The `stream_queue` / `stream_event` contract is already generic; the proxy handler only needs to feed normalized chunks. |
+| Support `contextId` passthrough | The daemon forwards the client's `contextId` so multi-turn conversations work end to end. |
+| Guard the staged `agent_type` mapping | The current map entry points to a missing module. Phase 14 must either land the handler with tests or guard selection so misconfigured agents fail with a clear configuration error. |
 
 ### Relationship to Existing Bridge Handlers
 
 | Handler | Protocol | Use when |
 |---------|----------|----------|
-| `HermesAgentHandler` | OpenAI-compatible HTTP + SSE | Hermes API Server (`:8642`) without A2A |
+| `HermesAgentHandler` | OpenAI-compatible HTTP + SSE | Hermes API Server without A2A |
 | `CoreEngineAgentHandler` | Gateway GraphQL + WebSocket | `ai_agent_core_engine` via `silvaengine_gateway` |
-| `OpenClawAgentHandler` | OpenAI-compatible HTTP | OpenClaw Gateway (`:18789`) |
+| `OpenClawAgentHandler` | OpenAI-compatible HTTP | OpenClaw Gateway |
 | `LLMHandler` | In-process Python | `ai_agent_core_engine` in-process |
-| **`A2AProxyHandler`** (new) | **A2A protocol** | **Any A2A-compliant backend** (Hermes A2A `:9900`, LangChain, CrewAI, Google ADK) |
+| `A2AProxyHandler` (planned) | A2A JSON-RPC + A2A SSE | Any backend that already exposes the A2A protocol |
 
-The proxy handler **does not replace** the existing handlers — it adds a new
-option for backends that speak A2A natively. Agents can be registered with
-`agent_type: "a2a_proxy"` to use the proxy, or with `agent_type: "hermes"` to
-use the OpenAI-compatible bridge. Both work simultaneously for different agents.
+The proxy handler does not replace the existing bridge handlers. It adds a new backend option for agents that speak A2A natively. Until Phase 14 is implemented, use `agent_type: "hermes"`, `core_engine`, `openclaw`, or `llm`; do not use `agent_type: "a2a_proxy"` for runtime agents.
