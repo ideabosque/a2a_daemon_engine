@@ -960,13 +960,27 @@ async def execute_ai_agent_streaming(
                         _logger.warning(f"on_run_id callback failed: {cb_err}")
                 continue
             if parsed.name == "approval":
-                # Hermes requires human approval — emit INPUT_REQUIRED to A2A
+                # Backend requires human approval (Hermes or core-engine
+                # human-in-the-loop) — emit INPUT_REQUIRED to A2A. The drain
+                # loop is backend-agnostic, so any handler that emits an
+                # "approval" chunk gets the same A2A interrupt (Phase 13, C7).
                 await _emit_status_to_sdk(event_queue, "INPUT_REQUIRED", _logger)
                 await _emit_status_to_sse(
                     streaming_manager, sse_task_id, "INPUT_REQUIRED", _logger,
                     partition_key=partition_key,
                 )
                 state.metadata["pending_approval"] = parsed.value
+                state.metadata["run_id"] = state.run_id
+                continue
+            if parsed.name == "auth_required":
+                # Backend signalled an authentication challenge — map to the
+                # A2A AUTH_REQUIRED interrupt state (Phase 13, C7).
+                await _emit_status_to_sdk(event_queue, "AUTH_REQUIRED", _logger)
+                await _emit_status_to_sse(
+                    streaming_manager, sse_task_id, "AUTH_REQUIRED", _logger,
+                    partition_key=partition_key,
+                )
+                state.metadata["auth_required"] = parsed.value
                 state.metadata["run_id"] = state.run_id
                 continue
             if parsed.name == "tool_call":

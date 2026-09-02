@@ -588,6 +588,7 @@ blockers.
 | 10 | Gateway-mediated ai_agent_core_engine integration (GraphQL non-streaming + WebSocket streaming, dual-path emission, SSE client-facing) | In Progress | `a2a_core_engine_handler.py` (new), `a2a_ai_agent_utility.py`, `a2a_executor.py`, `config.py`, `AGENTS.md`, `tests/test_phase10.py`, `tests/test_core_engine_handler.py` |
 | 11 | A2A protocol compliance through the gateway (Agent Card discovery + the 8 unrouted JSON-RPC methods) | Planned | `main.py`, `a2a_server.py`, `routes.yaml`, `a2a_extended_card.py`, `a2a_pushconfig.py` — see [`A2A_PROTOCOL_COMPLIANCE_PLAN.md`](A2A_PROTOCOL_COMPLIANCE_PLAN.md) |
 | 12 | Conversation grouping via contextId (add context_id + role to a2a_messages, persist user message, simplify history query) | Planned | `models/a2a_message.py`, `a2a_core.py`, `a2a_ai_agent_utility.py`, `migration/alembic/versions/0006_add_context_id_to_messages.py` |
+| 13 | Protocol conformance audit — remaining spec gaps (multimodal Parts, push delivery + durable store, extended-card wiring, streaming deviation) | In Progress — C1–C8 implemented; live verification pending | `a2a_executor.py`, `a2a_ai_agent_utility.py`, `a2a_server.py`, `a2a_pushconfig_store.py`, `main.py`, `A2A_ARCHITECTURE.md`, `tests/test_phase13.py` — see §Phase 13 |
 
 ## Phase 12: Conversation Grouping via contextId
 
@@ -632,3 +633,150 @@ This works but has gaps:
 | Keep `message_type` for backward compat | Existing inter-agent messages use `message_type`; new conversation messages use `role` |
 | Don't create separate `a2a_threads` table | `context_id` on `a2a_tasks` already serves as the thread identifier; a separate table adds no value |
 | Persist user message before `ask_model` | The user's message must be in `a2a_messages` so `get_a2a_messages` can find it on the next turn |
+
+## Phase 13: Protocol Conformance Audit
+
+**Status:** In Progress — C1–C8 implemented; live verification pending
+**Date:** 2026-09-02
+
+### Motivation
+
+Phases 1–12 built out the method surface, Agent Card discovery, task states, and
+conversation grouping. A fresh audit against the published A2A specification
+(<https://a2a-protocol.org/latest/specification/>, v1.0), cross-checked against
+the installed SDK and the actual code paths, found the method table and task-state
+map are now spec-aligned, but a set of **data-plane and capability-advertisement
+gaps** remain. Several are worse than "not implemented": the Agent Card advertises
+capabilities the code does not deliver, which is a conformance failure (a client
+that trusts the card will call a feature that silently does nothing).
+
+This phase closes those gaps. It is scoped to the gateway-reachable surface, the
+same as Phase 11.
+
+### What is already conformant (no action)
+
+| Area | Evidence |
+| --- | --- |
+| Full JSON-RPC method table routed (send, stream, get, list, cancel, resubscribe, 5×pushNotificationConfig, extended card) | `main.py:213-345` |
+| Agent Card served with per-request gateway-URL rewrite | `main.py:376-454` |
+| TaskState map covers all 9 spec states incl. `INPUT_REQUIRED`, `AUTH_REQUIRED`, `REJECTED` | `a2a_taskstore.py:283-301` |
+| v0.3 ⇄ v1.0 method-name aliases accepted | `main.py:257,275-336` |
+| Webhook allowlist (anti-SSRF) enforced on push-config writes | `a2a_server.py:45-73` |
+
+### Gaps (audit findings)
+
+| ID | Gap | Severity | Evidence |
+| --- | --- | --- | --- |
+| C1 | **Agent output files never emitted.** `normalize_final_output` resolves `output_files`, but every emit path builds a text-only `Part`, so `FilePart`/`DataPart` outputs are silently dropped before reaching the A2A client. | High | `a2a_ai_agent_utility.py:548,568` produce `output_files`; `a2a_executor.py:67-88` (`_agent_text_message`) and `a2a_ai_agent_utility.py:1078` emit text only |
+| C2 | **Inbound non-text Parts ignored.** `RequestContext.get_user_input()` extracts text only; a client-supplied `FilePart`/`DataPart` is discarded before the handler sees it. | Medium | `a2a_executor.py:246` |
+| C3 | **`pushNotifications` advertised but never delivered.** `capabilities.push_notifications=True`, but no `push_sender` is passed to `DefaultRequestHandler`. A config can be stored, yet no webhook is ever POSTed on a state change — the capability is a no-op. | High | advertised at `a2a_server.py:538`; `DefaultRequestHandler(...)` at `a2a_server.py:363-369` has no `push_sender` |
+| C4 | **Push-config store is non-durable.** `ValidatingPushNotificationConfigStore` extends `InMemoryPushNotificationConfigStore`, so registered configs are lost on process/Lambda recycle. | Medium | `a2a_server.py:45` |
+| C5 | **Extended card returns the base card verbatim.** `ExtendedAgentCardManager` (auth gating, security policies, contact info) is constructed but never wired; the handler receives a plain `CopyFrom` of the public card, so `agent/getAuthenticatedExtendedCard` reveals nothing beyond the public card even though `extendedAgentCard=true`. | Medium | manager built `a2a_server.py:307`, unused; `extended_agent_card = CopyFrom(agent_card)` at `a2a_server.py:359-360,368` |
+| C6 | **`message/stream` and `tasks/resubscribe` are buffered, not live SSE, over the gateway.** The spec mandates an open SSE stream of `TaskStatusUpdateEvent`/`TaskArtifactUpdateEvent`. Through the gateway's request/response dispatch the events are drained to completion, then returned as a single JSON-RPC response; live tokens are delivered out-of-band on the separate `/{ep}/a2a_sse` partition channel. | Medium (documented deviation) | `main.py:500-533` (`_collect_message_stream`, `_collect_task_subscription`) |
+| C7 | **`AUTH_REQUIRED` never emitted; `INPUT_REQUIRED` only on the Hermes streaming path.** Emit helpers exist but only the Hermes bridge raises `INPUT_REQUIRED`; the core-engine bridge and every non-streaming path never interrupt, so the advertised `human_in_the_loop` skill is partial. | Low | helper `a2a_sse.py:385` has no caller; `INPUT_REQUIRED` only at `a2a_ai_agent_utility.py:964` |
+| C8 | **`defaultInputModes`/`defaultOutputModes` are `["text"]` only** — internally consistent with C1/C2 (the card is honest), but it caps the agent at text I/O even where the backend can return files. Revisit alongside C1. | Info | `a2a_server.py:560-561` |
+
+### Tasks
+
+Ordered by severity; each is independently shippable.
+
+#### 13.1 Multimodal Parts (C1 + C2 + C8)
+
+| Sub-task | Description |
+| --- | --- |
+| 13.1.1 | Add a `_agent_parts_message(text, files, data, context_id)` helper that builds a multi-`Part` `Message` — `TextPart` for content, `FilePart` (URI or bytes) for each `output_files` entry, `DataPart` for structured payloads. Replace the text-only emit at the two completion sites in `a2a_executor.py` and the one in `a2a_ai_agent_utility.py:1078`. |
+| 13.1.2 | On input, walk `message.parts` (not just `get_user_input()`) so client `FilePart`/`DataPart` reach the handler; pass file references through to the backend `ask_model` call. |
+| 13.1.3 | Flip `defaultInputModes`/`defaultOutputModes` to reflect what the resolved handler actually supports (e.g. add `file`, `application/json`) — gate per agent so a text-only backend is not over-advertised. |
+| 13.1.4 | Tests: round-trip a `FilePart` out (backend returns `output_files`) and a `DataPart`/`FilePart` in. |
+
+#### 13.2 Push notification delivery (C3 + C4)
+
+| Sub-task | Description |
+| --- | --- |
+| 13.2.1 | Supply a `push_sender` to `DefaultRequestHandler` (SDK `BasePushNotificationSender` or the module's own) so a webhook is actually POSTed on task-state changes. Keep the `WebhookUrlValidator` allowlist on the send path, not only the write path. |
+| 13.2.2 | Back the push-config store with the daemon's persistence (reconcile `a2a_pushconfig.py` against the SDK `PushNotificationConfigStore` interface) so configs survive a restart. |
+| 13.2.3 | Only after 13.2.1–2 land is `capabilities.pushNotifications=true` truthful; add a conformance test asserting a registered webhook receives a POST on completion. If this phase slips, set `push_notifications=False` on the card in the interim so the card stops over-advertising. |
+
+#### 13.3 Extended Agent Card wiring (C5)
+
+| Sub-task | Description |
+| --- | --- |
+| 13.3.1 | Wire `ExtendedAgentCardManager` into `DefaultRequestHandler` via `extended_card_modifier` (or build the richer `extended_agent_card` from it) so `agent/getAuthenticatedExtendedCard` returns the auth-gated card, not a verbatim copy. |
+| 13.3.2 | Correct `A2A_PROTOCOL_COMPLIANCE_PLAN.md` §5.1, which currently reads as if the extended card is fully wired. |
+| 13.3.3 | Test: authenticated extended-card call returns fields absent from the public card; unauthenticated call is rejected or falls back to the public card. |
+
+#### 13.4 Streaming deviation (C6) — document + optionally close
+
+| Sub-task | Description |
+| --- | --- |
+| 13.4.1 | Document the buffered-`message/stream` behavior as a **known gateway deviation** in `A2A_ARCHITECTURE.md`: JSON-RPC clients receive an aggregated response; live events flow on `/{ep}/a2a_sse`. A spec-strict client expecting an SSE body on the RPC call will not get one. |
+| 13.4.2 | Evaluate whether the gateway can hold an SSE response open for the RPC route; if not, formalize `/{ep}/a2a_sse` as the sanctioned streaming binding and reflect it in the Agent Card `additionalInterfaces`. |
+
+#### 13.5 Interrupt states (C7)
+
+| Sub-task | Description |
+| --- | --- |
+| 13.5.1 | Emit `AUTH_REQUIRED` where a backend signals an auth challenge; wire the core-engine bridge's approval/interrupt signal to `INPUT_REQUIRED` (parity with the Hermes path). |
+| 13.5.2 | Scope the `human_in_the_loop` skill honestly if 13.5.1 is deferred. |
+
+### Design decisions
+
+| Decision | Rationale |
+| --- | --- |
+| Fix over-advertisement before adding features | A card that claims `pushNotifications`/`extendedAgentCard` while delivering neither fails conformance harder than a card that omits them. Either deliver (13.2/13.3) or drop the flag. |
+| Multimodal via the existing emit path, not a new transport | `output_files` is already resolved and dropped at the last step — the gap is purely the `Message` builder, not the bridge. |
+| Keep the buffered streaming deviation documented, not silently divergent | The gateway request/response model genuinely cannot hold an open SSE body on the RPC POST; naming `/a2a_sse` as the streaming binding is more honest than pretending the RPC call streams. |
+| Durable push store reuses `a2a_pushconfig.py` | Two config models already exist (Phase 11 §6.1); this phase picks the SDK interface over the daemon's persistence rather than maintaining both. |
+
+### Implementation Result (2026-09-02)
+
+Implemented in the daemon code, with focused unit tests in `tests/test_phase13.py`
+(14 tests, all passing):
+
+- **C1 (multimodal output).** New `_file_part`, `_data_part`, and
+  `_agent_parts_message` helpers in `a2a_executor.py` build the v1.0 protobuf
+  flattened `Part` (`text` / `url` / `raw` / `data` + `filename`/`media_type`).
+  The three completion emit sites now emit resolved `output_files` as file parts
+  instead of dropping them: `_handle_message_response` and the non-streaming
+  `_handle_task_execution` emit text + files together; the streaming path emits
+  files-only at completion (text was already streamed token-by-token).
+- **C2 (inbound parts).** `_extract_input_parts()` walks
+  `RequestContext.message.parts` and records client-supplied file/data parts onto
+  the persisted task `input_data` (`input_files` / `input_data_parts`). Forwarding
+  them into the backend `ask_model` call remains backend-specific and is deferred.
+- **C3 (push delivery).** `A2AProtocolServer._build_push_sender()` wires an SDK
+  `BasePushNotificationSender` (over an `httpx.AsyncClient`) into
+  `DefaultRequestHandler(push_sender=...)`, so registered webhooks now receive an
+  HTTP POST on task-state changes. The `WebhookUrlValidator` allowlist still gates
+  the config-store write path.
+- **C5 (extended card).** `_build_extended_agent_card()` enriches a copy of the
+  public card with the Traceability extension declaration (in
+  `capabilities.extensions`) and a documentation URL, so
+  `agent/getAuthenticatedExtendedCard` returns strictly more than the public card.
+- **C6 (streaming deviation).** Documented as a known gateway deviation in
+  `A2A_ARCHITECTURE.md` (buffered RPC response + out-of-band `/{ep}/a2a_sse`).
+- **C7 (interrupts).** The streaming drain loop now maps a backend `auth_required`
+  chunk to A2A `AUTH_REQUIRED`; the existing `approval` → `INPUT_REQUIRED` mapping
+  was generalized (backend-agnostic, not Hermes-only).
+- **C8 (I/O modes).** `default_input_modes` / `default_output_modes` are now
+  settings-driven (`a2a_default_input_modes` / `a2a_default_output_modes`),
+  defaulting to `["text"]` so the card stays honest by default.
+
+- **C4 (durable push store).** New `handlers/a2a_pushconfig_store.py` —
+  `DurablePushNotificationConfigStore` persists each task's push configs into the
+  existing `a2a_settings` table via the repository dispatch layer, so they survive
+  Lambda/process recycle on **both** the DynamoDB and PostgreSQL backends (no new
+  table or migration). It subclasses the SDK in-memory store (warm cache + owner
+  scoping), write-through persists on `set_info`, and lazy-loads on a cold
+  `get_info` / `get_info_for_dispatch`. The context-less dispatch read resolves
+  the tenant from a contextvar set at the gateway request entry
+  (`set_dispatch_partition` in `main.py`). The anti-SSRF `WebhookUrlValidator`
+  gates every write.
+
+Still pending:
+
+- **Live verification.** Round-trip a `FilePart` out and a push webhook POST
+  through an actual gateway; assert an authenticated extended-card call differs
+  from the public card over the wire, and that a push config registered in one
+  request is delivered by a later request (durable-store cold path).
+- **C2 forwarding.** Passing inbound file references into the backend LLM call.
