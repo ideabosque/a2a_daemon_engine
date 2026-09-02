@@ -2,8 +2,9 @@
 
 **Package Version:** 0.0.1
 **A2A SDK:** v1.0.2 (`a2a-sdk[http-server]`)
-**Status:** Phases 1–9 complete; Phase 10 (gateway-mediated `ai_agent_core_engine` integration) planned
-**Last Updated:** 2026-07-14
+**Status:** Phases 1–13 implemented; Phase 10 bridges (Hermes, Core Engine, OpenClaw) operational; Phase 12 conversation grouping via `contextId` complete
+**Last Updated:** 2026-09-02
+**Test Suite:** 224 passed, 48 skipped, 0 failed
 
 An Agent-to-Agent (A2A) protocol daemon engine module for the
 **SilvaEngine Gateway** (`silvaengine_gateway`). It is **not a standalone
@@ -16,7 +17,7 @@ and LLM handler bridging.
 Built on the official
 [A2A SDK](https://github.com/a2aproject/a2a-samples) server pattern, with
 dual-backend persistence (DynamoDB + PostgreSQL), multi-tenant isolation,
-and pluggable LLM handler integration.
+and pluggable LLM handler integration via `agent_type` shorthand.
 
 ## How It Integrates with the Gateway
 
@@ -52,15 +53,22 @@ silvaengine_gateway  (auth, routing, SSE client mgmt)
     ▼ dispatch → A2ADaemonEngine.a2a(**params)
 A2ADaemonExecutor
     │
+    ├── resolve_agent(agent_uuid) → DB metadata → agent_type → AGENT_TYPE_MAP
+    │
+    ├── Hermes bridge       → HTTP + SSE → Hermes API Server (:8642)
+    ├── Core Engine bridge  → GraphQL + WebSocket → ai_agent_core_engine
+    ├── OpenClaw bridge     → HTTP (OpenAI-compatible) → OpenClaw Gateway (:18789)
+    └── In-process LLM      → ai_agent_core_engine.handlers.llm_handler
+    │
     ├── Non-streaming → handler.ask_model(input_messages, context)
-    │       └── GraphQL → ai_agent_core_engine → final_output
+    │       └── Final output → persist message with context_id → A2A response
     │
     └── Streaming → handler.ask_model(..., stream_queue, stream_event)
-            └── WebSocket → ai_agent_core_engine → chunk_delta frames
-                    └── Dual-path: SDK EventQueue + sse_manager.broadcast_to_partition()
+            └── Dual-path: SDK EventQueue + SSE broadcast
+                    └── Reasoning tokens tagged (rs# markers) via SSE metadata
 
 Client receives:
-    • Non-streaming: single JSON-RPC response with A2A Message
+    • Non-streaming: single JSON-RPC response with A2A Message (contextId)
     • Streaming: live SSE events via GET /{ep}/sse (gateway-managed)
 ```
 
@@ -85,19 +93,35 @@ gateway.
 
 - **A2A SDK v1.0** — JSON-RPC over HTTP (slash-style at `/`, native at `/v1`)
 - **Gateway module** — registered via `deploy()`, dispatched by `silvaengine_gateway`
-- **Public Agent Card** at `/.well-known/agent-card.json` with ETag / Last-Modified
+- **Public Agent Card** at `/.well-known/agent-card.json` with 4 capability-style skills
 - **SDK AgentExecutor** integration (`A2ADaemonExecutor`)
 - **Dual-backend persistence** — DynamoDB (PynamoDB) or PostgreSQL (SQLAlchemy + Alembic)
 - **Multi-tenant isolation** via composite partition keys (`{endpoint_id}#{part_id}`)
 - **SSE streaming** — gateway-managed `sse_manager` delivers live tokens to connected clients
 - **GraphQL operations API** for CRUD on agents, tasks, messages, settings
 - **Dual authentication** — local JWT (HS256) and AWS Cognito (RS256 + JWKS)
-- **Pluggable LLM handlers** — per-agent `module_name` / `class_name` selection
+- **Pluggable LLM handlers** — `agent_type` shorthand (`hermes`, `core_engine`, `openclaw`, `llm`) via `AGENT_TYPE_MAP`; custom handlers via `module_name`/`class_name` in agent metadata
 - **Hermes Agent bridge** — route A2A tasks to Hermes Agent API Server via HTTP + SSE
-- **Gateway-mediated core engine bridge** (Phase 10, planned) — GraphQL for non-streaming, WebSocket for streaming
+- **Core Engine bridge** — route A2A tasks to `ai_agent_core_engine` via gateway GraphQL (non-streaming) + WebSocket (streaming)
+- **OpenClaw bridge** — route A2A tasks to OpenClaw Gateway via OpenAI-compatible HTTP
+- **Conversation grouping** (Phase 12) — `contextId` on `a2a_messages` for multi-turn history; user + agent messages persisted with `context_id` and `role`
+- **Reasoning token separation** — reasoning chunks tagged with `rs#` markers in SSE metadata; streamed separately from answer tokens
+- **Per-task external-run registry** — cancel/approval passthrough to Hermes/Core Engine backends
 - **Production hardening** — rate limiting, health monitoring, circuit breakers, OpenTelemetry
 - **Experimental gRPC transport** — JSON-over-gRPC with bidirectional streaming
 - **AWS Lambda support** — serverless JSON-RPC dispatch via `A2ADaemonEngine.a2a(**event)`
+
+## Agent Card Skills
+
+The public agent card advertises four capability-style skills (not internal
+operation names):
+
+| Skill | Covers operations |
+|-------|------------------|
+| `multi_agent_orchestration` | Task delegation, inter-agent messaging, streaming with SSE |
+| `agent_registry` | Agent discovery, registration, management |
+| `conversational_ai` | LLM-backed `SendMessage` via Hermes, Core Engine, OpenClaw, or in-process LLM |
+| `human_in_the_loop` | Streaming with `INPUT_REQUIRED` approval flows |
 
 ## Project Structure
 
@@ -107,24 +131,27 @@ a2a_daemon_engine/
 │   ├── main.py                          # A2ADaemonEngine — gateway module entry, deploy(), serverless dispatch
 │   ├── schema.py                        # GraphQL schema (Query, Mutations, types)
 │   ├── handlers/
-│   │   ├── config.py                    # Config singleton — backend, auth, Phase 10 settings
-│   │   ├── a2a_server.py                # Builds SDK Starlette app + DefaultRequestHandler
-│   │   ├── a2a_executor.py              # A2ADaemonExecutor(AgentExecutor) — request routing
+│   │   ├── config.py                    # Config singleton — backend, auth, Phase 10/12 settings
+│   │   ├── a2a_server.py                # Builds SDK Starlette app + DefaultRequestHandler + agent card
+│   │   ├── a2a_executor.py              # A2ADaemonExecutor(AgentExecutor) — request routing + external-run registry
 │   │   ├── a2a_handlers.py              # Business handlers (delivery, retry, routing)
 │   │   ├── a2a_jsonrpc_bridge.py         # JSON-RPC → SDK request normalization
 │   │   ├── a2a_taskstore.py              # DynamoDBA2ATaskStore (SDK TaskStore)
 │   │   ├── a2a_sse.py                   # SSEEventQueue, StreamingTaskManager, stream routes
 │   │   ├── sse_manager.py               # Gateway-compatible SSE client manager
-│   │   ├── a2a_core.py                  # GraphQL handler for agents/tasks/messages/settings
+│   │   ├── a2a_core.py                  # GraphQL handler for agents/tasks/messages/settings + conversation history
 │   │   ├── a2a_utility.py              # DynamoDB query/mutation helpers
-│   │   ├── a2a_ai_agent_utility.py      # Phase 10 bridge utility (agent resolution, streaming)
+│   │   ├── a2a_ai_agent_utility.py      # Phase 10 bridge — agent resolution, AGENT_TYPE_MAP, streaming, persistence
 │   │   ├── a2a_hermes_handler.py        # Hermes Agent bridge plugin (HTTP + SSE)
+│   │   ├── a2a_core_engine_handler.py   # Core Engine bridge plugin (GraphQL + WebSocket)
+│   │   ├── a2a_openclaw_handler.py      # OpenClaw bridge plugin (OpenAI-compatible HTTP)
+│   │   ├── a2a_pushconfig.py           # Push notification config + SSRF allowlist
+│   │   ├── a2a_pushconfig_store.py      # Durable push config store (PG-backed)
 │   │   ├── a2a_extended_card.py          # Extended agent card with auth gating
 │   │   ├── a2a_telemetry.py             # OpenTelemetry instrumentation (optional)
 │   │   ├── a2a_health_monitor.py        # Health monitoring + circuit breakers
 │   │   ├── a2a_rate_limiter.py         # Token-bucket rate limiting
 │   │   ├── a2a_cancellation.py          # Task cancellation propagation
-│   │   ├── a2a_pushconfig.py           # Push notification config + SSRF allowlist
 │   │   ├── a2a_cost_extension.py       # Cost/quota tracking (scaffold)
 │   │   ├── a2a_secure_passport.py      # Secure passport (scaffold)
 │   │   ├── a2a_grpc.py                 # gRPC transport (experimental)
@@ -149,7 +176,7 @@ a2a_daemon_engine/
 │   └── tests/                          # Test suite (see Testing below)
 ├── migration/
 │   ├── alembic.ini                     # Alembic config (PostgreSQL)
-│   └── alembic/versions/               # 4 migrations (agents, tasks, messages, settings)
+│   └── alembic/versions/               # 6 migrations (0001–0006)
 ├── docs/                               # Architecture, protocol, development plan, integration
 ├── AGENTS.md                           # Contributor reference
 ├── pyproject.toml                      # Poetry config, deps, ruff, pytest
@@ -190,7 +217,7 @@ pip install -e .[all]           # All extras
 # Set backend
 export DB_BACKEND=postgresql
 
-# Run migrations
+# Run migrations (6 migrations: agents, tasks, messages, settings, RLS, context_id)
 alembic -c migration/alembic.ini upgrade head
 ```
 
@@ -213,20 +240,27 @@ export AWS_SECRET_ACCESS_KEY=your_secret
 
 # Authentication (used by local dev server; gateway handles auth in production)
 export AUTH_PROVIDER=local
-# Required for AUTH_PROVIDER=local. Must be ≥ 32 chars and not a default/weak
-# value (e.g. CHANGEME, secret, password).
 export JWT_SECRET_KEY=replace-me-with-a-strong-random-secret-of-32-or-more-chars
 
-# Phase 10: ai_agent_core_engine bridge (planned — gateway-mediated)
+# Phase 10: Handler selection via agent_type shorthand
+export A2A_AI_AGENT_TYPE=hermes  # or core_engine, openclaw, llm
 export A2A_DEFAULT_AGENT_UUID=a2a-default-agent
 export A2A_STREAM_TIMEOUT=120.0
 export A2A_STREAMING_ENABLED=true
 
-# Phase 10: Hermes Agent bridge
+# Hermes Agent bridge
 export HERMES_API_URL=http://localhost:8642
 export HERMES_API_KEY=your-api-key
 export HERMES_MODEL=hermes-agent
 export HERMES_STREAM_TIMEOUT=300
+
+# Core Engine bridge
+export CORE_ENGINE_GRAPHQL_URL=http://localhost:8765
+export CORE_ENGINE_WS_URL=ws://localhost:8765
+export CORE_ENGINE_TOKEN=your-jwt-token
+# CORE_ENGINE_AGENT_UUID is auto-mapped from DEFAULT_AGENT_UUID
+export CORE_ENGINE_UPDATED_BY=a2a-daemon
+export CORE_ENGINE_STREAM_TIMEOUT=120
 ```
 
 ## Deployment
@@ -360,7 +394,7 @@ The daemon supports two database backends, selected via `DB_BACKEND`:
 | Backend | Config | Models | Migrations |
 |---|---|---|---|
 | **DynamoDB** (default) | `DB_BACKEND=dynamodb` | `models/dynamodb/` (PynamoDB) | Auto-create on startup |
-| **PostgreSQL** | `DB_BACKEND=postgresql` | `models/postgresql/` (SQLAlchemy) | Alembic (`migration/alembic/`) |
+| **PostgreSQL** | `DB_BACKEND=postgresql` | `models/postgresql/` (SQLAlchemy) | Alembic (`migration/alembic/`) — 6 migrations (0001–0006) |
 
 Repository selection is dispatched at runtime via `models/repositories/dispatch.py`
 → `get_repo(entity_type)`, which lazily initializes the appropriate repository
@@ -368,35 +402,91 @@ based on `Config.DB_BACKEND`.
 
 ## Pluggable LLM Handlers
 
-Agent execution is data-driven via per-agent `module_name` and `class_name` in
-the agent registry. The executor loads the handler dynamically and calls
-`ask_model()` with the same contract regardless of backend.
+Agent execution is data-driven via `agent_type` shorthand in the agent
+registry metadata. The executor resolves the handler dynamically via
+`AGENT_TYPE_MAP` and calls `ask_model()` with the same contract regardless
+of backend.
+
+### Handler Resolution Priority
+
+1. Agent metadata `module_name` / `class_name` (explicit, per-agent — escape hatch for custom handlers)
+2. Agent metadata `agent_type` (shorthand → `AGENT_TYPE_MAP`)
+3. `Config.a2a_ai_agent_type` (env-var shorthand fallback)
+
+### `AGENT_TYPE_MAP`
+
+| `agent_type` | module | class | Transport |
+|---|---|---|---|
+| `hermes` | `a2a_hermes_handler` | `HermesAgentHandler` | HTTP + SSE to Hermes API Server |
+| `core_engine` | `a2a_core_engine_handler` | `CoreEngineAgentHandler` | GraphQL + WebSocket to `ai_agent_core_engine` |
+| `openclaw` | `a2a_openclaw_handler` | `OpenClawAgentHandler` | OpenAI-compatible HTTP to OpenClaw Gateway |
+| `llm` | `ai_agent_core_engine.handlers.llm_handler` | `LLMHandler` | In-process LLM |
+| `a2a_proxy` | `a2a_a2a_proxy_handler` | `A2AProxyHandler` | A2A protocol to any A2A-compliant backend |
 
 ### Hermes Agent Handler
 
 Routes A2A tasks to a running Hermes Agent API Server via HTTP + SSE:
 
+```json
+{"agent_type": "hermes", "hermes_api_url": "...", "hermes_api_key": "...", "hermes_model": "..."}
 ```
-module_name: "a2a_daemon_engine.handlers.a2a_hermes_handler"
-class_name:  "HermesAgentHandler"
-```
 
-Per-agent metadata: `hermes_api_url`, `hermes_api_key`, `hermes_model`,
-`hermes_timeout`. See [Hermes Integration Guide](docs/HERMES_INTEGRATION.md)
-for full setup, A2A state mapping, and E2E test instructions.
+See [Hermes Integration Guide](docs/HERMES_INTEGRATION.md) for full setup.
 
-### Core Engine Handler (Phase 10 — Planned)
+### Core Engine Handler
 
-Gateway-mediated integration with `ai_agent_core_engine`:
+Routes A2A tasks to `ai_agent_core_engine` via `silvaengine_gateway`:
 
-- **Non-streaming** (`SendMessage`) → GraphQL mutation to
-  `POST /{ep}/ai_agent_core_graphql`
-- **Streaming** (`SendStreamingMessage`) → WebSocket to
-  `/{ep}/ai_agent_core_ws` with `chunk_delta` frames
+- **Non-streaming** (`SendMessage`) → GraphQL 3-step: `ask_model` → `execute_ask_model` → `message_list`
+- **Streaming** (`SendStreamingMessage`) → WebSocket `chunk_delta` frames with reasoning metadata
 - **Client-facing streaming** stays on SSE (`GET /{ep}/sse` — gateway-managed)
 
-See [Development Plan — Phase 10](docs/A2A_DEVELOPMENT_PLAN.md#phase-10-gateway-mediated-ai_agent_core_engine-integration)
-for the full design.
+```json
+{"agent_type": "core_engine", "core_engine_graphql_url": "...", "core_engine_ws_url": "...", "core_engine_token": "..."}
+```
+
+### OpenClaw Handler
+
+Routes A2A tasks to OpenClaw Gateway via OpenAI-compatible HTTP:
+
+```json
+{"agent_type": "openclaw", "openclaw_api_url": "...", "openclaw_api_key": "..."}
+```
+
+### A2A Proxy Handler (Phase 14)
+
+Forwards A2A requests **directly** to any A2A-compliant backend — no protocol
+translation. Targets include Hermes Agent's native A2A server (`:9900`),
+LangChain, CrewAI, and Google ADK agents.
+
+```json
+{"agent_type": "a2a_proxy", "a2a_proxy_url": "http://hermes-host:9900", "a2a_proxy_token": "..."}
+```
+
+Proxy connection details are **per-agent metadata only** (no global env vars)
+since each agent proxies to its own backend:
+
+| Key | Description | Default |
+|-----|-------------|---------|
+| `a2a_proxy_url` | Backend's A2A endpoint URL | *(required)* |
+| `a2a_proxy_token` | Bearer token for backend A2A auth | *(empty)* |
+| `a2a_proxy_timeout` | Request/stream timeout in seconds | `120` |
+
+- **Non-streaming**: `SendMessage` JSON-RPC → parse `Message`/`Task` result
+- **Streaming**: `SendStreamingMessage` → drain A2A SSE frames (`Message` → tokens, `INPUT_REQUIRED` → approval, `COMPLETED`/`FAILED` → terminal)
+- **Cancel**: `CancelTask` JSON-RPC passthrough
+- **Approval**: continuation `SendMessage` with the same `contextId`
+
+## Conversation Grouping (Phase 12)
+
+The A2A protocol groups conversations by `contextId`. The daemon persists
+`context_id` and `role` on `a2a_messages` (migration `0006`):
+
+- **User message**: persisted before `ask_model` with `role="user"` and `context_id`
+- **Agent response**: persisted after `ask_model` with `role="agent"` and `context_id`
+- **History query**: `get_a2a_messages` queries `a2a_messages WHERE context_id = :ctx ORDER BY created_at`
+- **Thread creation**: the core engine creates the thread on the first turn (when `thread_uuid` is empty); the daemon adopts the returned `contextId` for subsequent turns
+- **Reasoning separation**: reasoning tokens tagged with `rs#` markers in SSE metadata; accumulated separately from answer tokens
 
 ## Testing
 
@@ -423,20 +513,26 @@ python -m pytest -m integration
 
 ### Test Files
 
-| File | Coverage |
-|------|---------|
-| `test_phase6.py` | A2A SDK v1.0 upgrade (state migration, enums, pagination) |
-| `test_phase8.py` | Production hardening, SSE infrastructure, security |
-| `test_phase9.py` | Advanced extensions (gRPC, subscriptions, health, rate limit) |
-| `test_phase10.py` | Phase 10 bridge (agent resolution, streaming, persistence) |
-| `test_hermes_handler.py` | Hermes Agent handler (mocked HTTP via `httpx.MockTransport`) |
-| `test_executor_unit.py` | Executor unit tests |
-| `test_handlers_unit.py` | Business handler unit tests |
-| `test_a2a_jsonrpc_bridge.py` | JSON-RPC bridge normalization |
-| `test_jwt_validation.py` | JWT validation (local + Cognito) |
-| `test_api.py` | Live API integration tests |
-| `test_postgresql_backend.py` | PostgreSQL backend tests |
-| `test_helpers.py` | Fixture support for live-API suites |
+| File | Coverage | Tests |
+|------|---------|-------|
+| `test_phase6.py` | A2A SDK v1.0 upgrade (state migration, enums, pagination) | 16 |
+| `test_phase8.py` | Production hardening, SSE infrastructure, security | 27 |
+| `test_phase9.py` | Advanced extensions (gRPC, subscriptions, health, rate limit) | 4 |
+| `test_phase10.py` | Phase 10 bridge (agent resolution, AGENT_TYPE_MAP, streaming, persistence) | 53 |
+| `test_phase13.py` | Output parts, push config store, extended card, output modes | 21 |
+| `test_hermes_handler.py` | Hermes Agent handler (mocked HTTP via `httpx.MockTransport`) | 24 |
+| `test_core_engine_handler.py` | Core Engine handler (mocked GraphQL + WebSocket) | 18 |
+| `test_openclaw_handler.py` | OpenClaw handler (mocked HTTP, agent selection) | 25 |
+| `test_executor_unit.py` | Executor unit tests | 13 |
+| `test_handlers_unit.py` | Business handler unit tests | 8 |
+| `test_a2a_jsonrpc_bridge.py` | JSON-RPC bridge normalization | 4 |
+| `test_a2a_protocol_compliance.py` | Gateway JSON-RPC routing + push config | 16 |
+| `test_jwt_validation.py` | JWT validation (local + Cognito) | 11 |
+| `test_api.py` | Live API integration tests (skipped without env var) | 10 |
+| `test_postgresql_backend.py` | PostgreSQL backend tests | 13 |
+| `test_hermes_live.py` | Live Hermes handler tests (skipped without env var) | 12 |
+| `test_openclaw_live.py` | Live OpenClaw handler tests (skipped without env var) | 14 |
+| `test_helpers.py` | Fixture support for live-API suites | — |
 
 ### Test Markers
 
@@ -474,7 +570,13 @@ python -m mypy a2a_daemon_engine/
 | 7 | Streaming and multi-turn (SSE, INPUT_REQUIRED, AUTH_REQUIRED) | ✅ Complete |
 | 8 | Production hardening (extended cards, telemetry, TCK, security) | ✅ Complete |
 | 9 | Advanced extensions (gRPC, subscriptions, health, rate limit) | ✅ Complete |
-| 10 | Gateway-mediated `ai_agent_core_engine` integration (GraphQL + WebSocket) | 📋 Planned |
+| 10 | Gateway-mediated `ai_agent_core_engine` integration (GraphQL + WebSocket) | ✅ Complete |
+| 10+ | Hermes Agent bridge (HTTP + SSE) | ✅ Complete |
+| 10+ | OpenClaw bridge (OpenAI-compatible HTTP) | ✅ Complete |
+| 11 | A2A protocol compliance through the gateway | ✅ Complete |
+| 12 | Conversation grouping via `contextId` (`context_id` + `role` on `a2a_messages`) | ✅ Complete |
+| 13 | Output parts, durable push config store, extended card extensions | ✅ Complete |
+| 14 | A2A-native proxy handler (forward A2A to Hermes A2A, LangChain, CrewAI, Google ADK) | ✅ Complete |
 
 See the [Development Plan](docs/A2A_DEVELOPMENT_PLAN.md) for full details.
 
@@ -484,16 +586,19 @@ See the [Development Plan](docs/A2A_DEVELOPMENT_PLAN.md) for full details.
 |----------|---------|
 | [Architecture](docs/A2A_ARCHITECTURE.md) | HTTP surface table, runtime components, request-flow sequence diagram |
 | [Protocol Call Flow](docs/A2A_PROTOCOL_CALL_FLOW.md) | Per-method call paths for `message/send`, `tasks/get`, `tasks/cancel` |
-| [Development Plan](docs/A2A_DEVELOPMENT_PLAN.md) | Phases 1–10, implementation notes, release gates |
+| [Development Plan](docs/A2A_DEVELOPMENT_PLAN.md) | Phases 1–13, implementation notes, release gates |
+| [Protocol Compliance Plan](docs/A2A_PROTOCOL_COMPLIANCE_PLAN.md) | Phase 11 protocol compliance through the gateway |
 | [Test Plan](docs/A2A_TEST_PLAN.md) | Unit / live / release-gate coverage |
 | [Integration Test Plan](docs/INTEGRATION_TEST_PLAN.md) | End-to-end / integration playbook |
-| [Integration Scenarios SOP](docs/INTEGRATION_SCENARIOS_SOP.md) | Integration scenarios standard operating procedure |
+| [Integration Scenarios SOP](docs/INTEGRATION_SCENARIOS_SOP.md) | Integration scenarios standard operating procedure (v0.3.0) |
 | [Hermes Integration](docs/HERMES_INTEGRATION.md) | Hermes Agent bridge setup, state mapping, E2E tests |
 | [Hermes Bridge Dev Plan](docs/HERMES_A2A_BRIDGE_DEVELOPMENT_PLAN.md) | Hermes bridge development plan |
+| [OpenClaw Integration](docs/OPENCLAW_INTEGRATION.md) | OpenClaw bridge setup and configuration |
 | [Protocol Analysis](docs/a2a-protocol-analysis.md) | Protocol background and design suggestions |
 | [Documentation Index](docs/DOCUMENTATION_INDEX.md) | Documentation navigation guide |
 | [AGENTS.md](AGENTS.md) | Contributor reference (environment, key files, JSON-RPC rules) |
 | [Tests README](a2a_daemon_engine/tests/README.md) | Test suite overview and coverage |
+| [Certification Report](docs/test_results/integration_certification_report.md) | Latest integration certification report |
 
 ## License
 
