@@ -388,7 +388,7 @@ sequenceDiagram
 
 ### Handler Plugin Contract
 
-The new `CoreEngineAgentHandler` (`handlers/a2a_core_engine_handler.py`)
+The new `CoreEngineAgentHandler` (`handlers/core_engine_handler.py`)
 implements the **same narrow bridge contract** as `HermesAgentHandler`, so the
 executor and `a2a_ai_agent_utility.py` streaming/persistence machinery are
 reused unchanged:
@@ -406,7 +406,7 @@ reused unchanged:
 Selection is per-agent via registry metadata (no executor change):
 
 ```
-module_name: "a2a_daemon_engine.handlers.a2a_core_engine_handler"
+module_name: "a2a_daemon_engine.handlers.core_engine_handler"
 class_name:  "CoreEngineAgentHandler"
 ```
 
@@ -485,7 +485,7 @@ core-engine communication over gateway transports.
 
 #### 10.1 Handler Plugin — CoreEngineAgentHandler
 
-Create `handlers/a2a_core_engine_handler.py` implementing the narrow bridge
+Create `handlers/core_engine_handler.py` implementing the narrow bridge
 contract over gateway transports.
 
 | Sub-task | Description |
@@ -599,11 +599,11 @@ blockers.
 | 7 | Streaming and multi-turn (SSE, INPUT_REQUIRED, AUTH_REQUIRED, push config) | Complete | `a2a_sse.py`, `a2a_pushconfig.py`, `a2a_executor.py` |
 | 8 | Production hardening (extended cards, telemetry, TCK, security) | Complete | `a2a_extended_card.py`, `a2a_telemetry.py`, `a2a_tck_checker.py` |
 | 9 | Advanced extensions (gRPC, subscriptions, health, rate limit, cancellation, passport, cost) | Complete | `a2a_grpc.py`, `a2a_graphql_subscriptions.py`, `a2a_health_monitor.py`, `a2a_rate_limiter.py`, `a2a_cancellation.py`, `a2a_secure_passport.py`, `a2a_cost_extension.py` |
-| 10 | Gateway-mediated ai_agent_core_engine integration (GraphQL non-streaming + WebSocket streaming, dual-path emission, SSE client-facing) | Implemented; live gateway verification pending | `a2a_core_engine_handler.py` (new), `a2a_ai_agent_utility.py`, `a2a_executor.py`, `config.py`, `AGENTS.md`, `tests/test_phase10.py`, `tests/test_core_engine_handler.py` |
+| 10 | Gateway-mediated ai_agent_core_engine integration (GraphQL non-streaming + WebSocket streaming, dual-path emission, SSE client-facing) | Implemented; live gateway verification pending | `core_engine_handler.py` (new), `a2a_ai_agent_utility.py`, `a2a_executor.py`, `config.py`, `AGENTS.md`, `tests/test_phase10.py`, `tests/test_core_engine_handler.py` |
 | 11 | A2A protocol compliance through the gateway (Agent Card discovery + expanded JSON-RPC routing) | Implemented in code; live gateway verification pending | `main.py`, `a2a_server.py`, `a2a_extended_card.py`, `a2a_pushconfig.py`, `a2a_pushconfig_store.py`, `tests/test_a2a_protocol_compliance.py` - see [`A2A_PROTOCOL_COMPLIANCE_PLAN.md`](A2A_PROTOCOL_COMPLIANCE_PLAN.md) |
 | 12 | Conversation grouping via contextId (add context_id + role to a2a_messages, persist user message, simplify history query) | Complete | `models/a2a_message.py`, `a2a_core.py`, `a2a_ai_agent_utility.py`, `migration/alembic/versions/0006_add_context_id_to_messages.py` |
 | 13 | Protocol conformance audit - remaining spec gaps (multimodal Parts, push delivery + durable store, extended-card wiring, streaming deviation) | Implemented in code; live gateway verification and C2 backend forwarding pending | `a2a_executor.py`, `a2a_ai_agent_utility.py`, `a2a_server.py`, `a2a_pushconfig_store.py`, `main.py`, `A2A_ARCHITECTURE.md`, `tests/test_phase13.py` - see Phase 13 |
-| 14 | A2A-native proxy handler - forward A2A requests to external A2A-compliant agents without protocol translation | Planned - mapping is staged, but handler/tests/config are not implemented yet | `a2a_ai_agent_utility.py` (mapping only), `a2a_a2a_proxy_handler.py` (planned), `config.py` (planned), `tests/test_a2a_proxy_handler.py` (planned) |
+| 14 | A2A-native proxy handler - forward A2A requests to external A2A-compliant agents without protocol translation | Planned - mapping is staged, but handler/tests/config are not implemented yet | `a2a_ai_agent_utility.py` (mapping only), `a2a_proxy_handler.py` (planned), `config.py` (planned), `tests/test_a2a_proxy_handler.py` (planned) |
 
 ## Phase 12: Conversation Grouping via contextId
 
@@ -802,8 +802,8 @@ Still pending:
 
 ### Current Checkout Status
 
-- `a2a_ai_agent_utility.py` already maps `agent_type: "a2a_proxy"` to `a2a_daemon_engine.handlers.a2a_a2a_proxy_handler.A2AProxyHandler`.
-- `handlers/a2a_a2a_proxy_handler.py` does not exist yet.
+- `a2a_ai_agent_utility.py` already maps `agent_type: "a2a_proxy"` to `a2a_daemon_engine.handlers.a2a_proxy_handler.A2AProxyHandler`.
+- `handlers/a2a_proxy_handler.py` does not exist yet.
 - `tests/test_a2a_proxy_handler.py` does not exist yet.
 - `A2A_PROXY_*` settings are not wired in `Config` yet.
 - Do not register production agents with `agent_type: "a2a_proxy"` until 14.1, 14.3, 14.8, and 14.9 are complete. In the current checkout, that selection resolves to a missing module and will fail at import time.
@@ -848,7 +848,7 @@ A2AProxyHandler
 
 ### Handler Plugin Contract
 
-The planned `A2AProxyHandler` (`handlers/a2a_a2a_proxy_handler.py`) should implement the same narrow bridge contract used by the existing Phase 10 handlers:
+The planned `A2AProxyHandler` (`handlers/a2a_proxy_handler.py`) should implement the same narrow bridge contract used by the existing Phase 10 handlers:
 
 - `__init__(logger, agent_config, setting, context, http_transport=None)` - initialize config and allow injectable HTTP/SSE transport for tests.
 - `ask_model(input_messages, context, stream_queue=None, stream_event=None)` - forward A2A `SendMessage` or `SendStreamingMessage` to the backend endpoint; drain backend A2A SSE events into `stream_queue` for streaming calls.
@@ -865,7 +865,7 @@ The map entry is already present, but it should be treated as staged until the h
 
 | `agent_type` | module | class | Current status |
 |---|---|---|---|
-| `a2a_proxy` | `a2a_daemon_engine.handlers.a2a_a2a_proxy_handler` | `A2AProxyHandler` | Mapping exists; target module missing |
+| `a2a_proxy` | `a2a_daemon_engine.handlers.a2a_proxy_handler` | `A2AProxyHandler` | Mapping exists; target module missing |
 
 ### Per-Agent Metadata
 
@@ -917,7 +917,7 @@ global env-var fallbacks, since each agent proxies to its own backend.
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 14.1 | Create `a2a_a2a_proxy_handler.py` with `A2AProxyHandler` | Planned |
+| 14.1 | Create `a2a_proxy_handler.py` with `A2AProxyHandler` | Planned |
 | 14.2 | Add `a2a_proxy` to `AGENT_TYPE_MAP` in `a2a_ai_agent_utility.py` | Partially done - mapping exists, target module missing |
 | 14.3 | Add `A2A_PROXY_*` config fields to `Config` and `_set_parameters` | Planned |
 | 14.4 | Implement non-streaming: forward `SendMessage` JSON-RPC to backend | Planned |

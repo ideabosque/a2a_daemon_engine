@@ -27,7 +27,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from a2a_daemon_engine.handlers.a2a_openclaw_handler import OpenClawAgentHandler
+from a2a_daemon_engine.handlers.openclaw_handler import OpenClawAgentHandler
 
 __author__ = "bibow"
 
@@ -43,7 +43,7 @@ def base_agent_config():
         "agent_id": "openclaw-agent",
         "agent_name": "OpenCLAW Agent",
         "metadata": {
-            "module_name": "a2a_daemon_engine.handlers.a2a_openclaw_handler",
+            "module_name": "a2a_daemon_engine.handlers.openclaw_handler",
             "class_name": "OpenClawAgentHandler",
             "openclaw_api_url": "http://localhost:18789",
             "openclaw_api_key": "test-key",
@@ -429,7 +429,7 @@ class TestConfigResolution:
     def test_config_defaults(self, logger):
         cfg = {"agent_id": "openclaw-agent", "metadata": {}}
         with patch(
-            "a2a_daemon_engine.handlers.a2a_openclaw_handler.Config",
+            "a2a_daemon_engine.handlers.openclaw_handler.Config",
         ) as mock_config:
             mock_config.openclaw_api_url = None
             mock_config.openclaw_api_key = None

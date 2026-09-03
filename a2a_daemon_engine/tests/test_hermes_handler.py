@@ -22,7 +22,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from a2a_daemon_engine.handlers.a2a_hermes_handler import HermesAgentHandler
+from a2a_daemon_engine.handlers.hermes_handler import HermesAgentHandler
 
 __author__ = "bibow"
 
@@ -38,7 +38,7 @@ def base_agent_config():
         "agent_id": "hermes-agent",
         "agent_name": "Hermes Agent",
         "metadata": {
-            "module_name": "a2a_daemon_engine.handlers.a2a_hermes_handler",
+            "module_name": "a2a_daemon_engine.handlers.hermes_handler",
             "class_name": "HermesAgentHandler",
             "hermes_api_url": "http://localhost:8642",
             "hermes_api_key": "test-key",
@@ -418,7 +418,7 @@ class TestConfigResolution:
     def test_config_defaults(self, logger):
         cfg = {"agent_id": "hermes-agent", "metadata": {}}
         with patch(
-            "a2a_daemon_engine.handlers.a2a_hermes_handler.Config",
+            "a2a_daemon_engine.handlers.hermes_handler.Config",
         ) as mock_config:
             mock_config.hermes_api_url = None
             mock_config.hermes_api_key = None

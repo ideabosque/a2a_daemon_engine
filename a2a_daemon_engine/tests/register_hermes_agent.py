@@ -66,7 +66,7 @@ HERMES_MODEL = env.get("HERMES_MODEL", "hermes-agent")
 # ---------------------------------------------------------------------------
 
 METADATA = json.dumps({
-    "module_name": "a2a_daemon_engine.handlers.a2a_hermes_handler",
+    "module_name": "a2a_daemon_engine.handlers.hermes_handler",
     "class_name": "HermesAgentHandler",
     "hermes_api_url": HERMES_API_URL,
     "hermes_api_key": HERMES_API_KEY,
