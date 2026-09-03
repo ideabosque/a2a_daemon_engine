@@ -12,10 +12,10 @@ A2A endpoints used (native A2A protocol):
 - POST /  SendStreamingMessage (streaming via SSE)
 - POST /  CancelTask (cancel)
 
-Configuration (per-agent metadata or env vars):
-- a2a_proxy_url / A2A_PROXY_URL
-- a2a_proxy_token / A2A_PROXY_TOKEN
-- a2a_proxy_timeout / A2A_PROXY_TIMEOUT
+Configuration is per-agent metadata only:
+- a2a_proxy_url
+- a2a_proxy_token
+- a2a_proxy_timeout
 """
 
 import json
