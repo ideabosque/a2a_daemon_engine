@@ -56,15 +56,15 @@ AI_CORE_AVAILABLE = _AI_CORE_AVAILABLE
 # added here so callers can use the shorthand without knowing the Python path.
 AGENT_TYPE_MAP: dict[str, dict[str, str]] = {
     "hermes": {
-        "module_name": "a2a_daemon_engine.handlers.a2a_hermes_handler",
+        "module_name": "a2a_daemon_engine.handlers.hermes_handler",
         "class_name": "HermesAgentHandler",
     },
     "core_engine": {
-        "module_name": "a2a_daemon_engine.handlers.a2a_core_engine_handler",
+        "module_name": "a2a_daemon_engine.handlers.core_engine_handler",
         "class_name": "CoreEngineAgentHandler",
     },
     "openclaw": {
-        "module_name": "a2a_daemon_engine.handlers.a2a_openclaw_handler",
+        "module_name": "a2a_daemon_engine.handlers.openclaw_handler",
         "class_name": "OpenClawAgentHandler",
     },
     "llm": {
@@ -72,7 +72,7 @@ AGENT_TYPE_MAP: dict[str, dict[str, str]] = {
         "class_name": "LLMHandler",
     },
     "a2a_proxy": {
-        "module_name": "a2a_daemon_engine.handlers.a2a_a2a_proxy_handler",
+        "module_name": "a2a_daemon_engine.handlers.a2a_proxy_handler",
         "class_name": "A2AProxyHandler",
     },
 }

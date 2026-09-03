@@ -23,7 +23,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from a2a_daemon_engine.handlers.a2a_a2a_proxy_handler import A2AProxyHandler
+from a2a_daemon_engine.handlers.a2a_proxy_handler import A2AProxyHandler
 
 __author__ = "bibow"
 

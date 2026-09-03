@@ -325,19 +325,19 @@ class TestResolveAgent:
 class TestAgentTypeMap:
     def test_hermes_mapping(self):
         assert AGENT_TYPE_MAP["hermes"]["module_name"] == (
-            "a2a_daemon_engine.handlers.a2a_hermes_handler"
+            "a2a_daemon_engine.handlers.hermes_handler"
         )
         assert AGENT_TYPE_MAP["hermes"]["class_name"] == "HermesAgentHandler"
 
     def test_core_engine_mapping(self):
         assert AGENT_TYPE_MAP["core_engine"]["module_name"] == (
-            "a2a_daemon_engine.handlers.a2a_core_engine_handler"
+            "a2a_daemon_engine.handlers.core_engine_handler"
         )
         assert AGENT_TYPE_MAP["core_engine"]["class_name"] == "CoreEngineAgentHandler"
 
     def test_openclaw_mapping(self):
         assert AGENT_TYPE_MAP["openclaw"]["module_name"] == (
-            "a2a_daemon_engine.handlers.a2a_openclaw_handler"
+            "a2a_daemon_engine.handlers.openclaw_handler"
         )
         assert AGENT_TYPE_MAP["openclaw"]["class_name"] == "OpenClawAgentHandler"
 

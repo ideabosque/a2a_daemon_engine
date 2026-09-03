@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-The `HermesAgentHandler` (`a2a_daemon_engine/handlers/a2a_hermes_handler.py`)
+The `HermesAgentHandler` (`a2a_daemon_engine/handlers/hermes_handler.py`)
 is a Phase 10 bridge plugin that routes A2A tasks to a running **Hermes Agent
 API Server** instance via HTTP + SSE, instead of calling an in-process LLM
 handler.
@@ -151,7 +151,7 @@ This script:
 
 ```json
 {
-  "module_name": "a2a_daemon_engine.handlers.a2a_hermes_handler",
+  "module_name": "a2a_daemon_engine.handlers.hermes_handler",
   "class_name": "HermesAgentHandler",
   "hermes_api_url": "http://127.0.0.1:8642",
   "hermes_api_key": "hermes-local-key",
@@ -164,7 +164,7 @@ This script:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `module_name` | *(required)* | `a2a_daemon_engine.handlers.a2a_hermes_handler` |
+| `module_name` | *(required)* | `a2a_daemon_engine.handlers.hermes_handler` |
 | `class_name` | *(required)* | `HermesAgentHandler` |
 | `hermes_api_url` | `http://localhost:8642` | Hermes API Server base URL |
 | `hermes_api_key` | *(empty)* | Bearer token for API Server auth |
@@ -227,7 +227,7 @@ text, while SSE clients receive real-time token streaming.
 
 2. Gateway → dispatch_a2a → A2ADaemonExecutor.execute()
    → resolve_agent("hermes-agent") → PostgreSQL DB returns metadata
-     → module_name = a2a_hermes_handler, class_name = HermesAgentHandler
+     → module_name = hermes_handler, class_name = HermesAgentHandler
      → hermes_api_url, hermes_api_key, hermes_model from metadata
    → execute_ai_agent_non_streaming()
      → handler.ask_model(input_messages, context)
@@ -368,7 +368,7 @@ inserts/updates the `hermes-agent` record with full metadata via direct SQL.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `module_name` | *(required)* | `a2a_daemon_engine.handlers.a2a_hermes_handler` |
+| `module_name` | *(required)* | `a2a_daemon_engine.handlers.hermes_handler` |
 | `class_name` | *(required)* | `HermesAgentHandler` |
 | `hermes_api_url` | `http://localhost:8642` | Hermes API Server base URL |
 | `hermes_api_key` | *(empty)* | Bearer token for API Server auth |
@@ -465,7 +465,7 @@ registry because `message/send` doesn't create an A2A task.
 
 | File | Role |
 |------|------|
-| `handlers/a2a_hermes_handler.py` | HermesAgentHandler — HTTP + SSE bridge to Hermes API Server |
+| `handlers/hermes_handler.py` | HermesAgentHandler — HTTP + SSE bridge to Hermes API Server |
 | `handlers/a2a_ai_agent_utility.py` | Phase 10 bridge — resolve agent, load handler, execute, persist; response envelope unwrapping; direct SQL metadata fallback; streaming drain loop (single Message, SSE-only status) |
 | `handlers/a2a_executor.py` | A2ADaemonExecutor — routes A2A tasks; no status events for message/send (SDK v2 constraint) |
 | `handlers/a2a_core.py` | GraphQL handler — injects `partition_key` into GraphQL context for PG repos |
