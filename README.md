@@ -523,6 +523,7 @@ python -m pytest -m integration
 | `test_hermes_handler.py` | Hermes Agent handler (mocked HTTP via `httpx.MockTransport`) | 24 |
 | `test_core_engine_handler.py` | Core Engine handler (mocked GraphQL + WebSocket) | 18 |
 | `test_openclaw_handler.py` | OpenClaw handler (mocked HTTP, agent selection) | 25 |
+| `test_a2a_proxy_handler.py` | A2A proxy handler (mocked A2A backend via `httpx.MockTransport`) | 22 |
 | `test_executor_unit.py` | Executor unit tests | 13 |
 | `test_handlers_unit.py` | Business handler unit tests | 8 |
 | `test_a2a_jsonrpc_bridge.py` | JSON-RPC bridge normalization | 4 |

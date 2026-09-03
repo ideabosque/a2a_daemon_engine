@@ -603,7 +603,7 @@ blockers.
 | 11 | A2A protocol compliance through the gateway (Agent Card discovery + expanded JSON-RPC routing) | Implemented in code; live gateway verification pending | `main.py`, `a2a_server.py`, `a2a_extended_card.py`, `a2a_pushconfig.py`, `a2a_pushconfig_store.py`, `tests/test_a2a_protocol_compliance.py` - see [`A2A_PROTOCOL_COMPLIANCE_PLAN.md`](A2A_PROTOCOL_COMPLIANCE_PLAN.md) |
 | 12 | Conversation grouping via contextId (add context_id + role to a2a_messages, persist user message, simplify history query) | Complete | `models/a2a_message.py`, `a2a_core.py`, `a2a_ai_agent_utility.py`, `migration/alembic/versions/0006_add_context_id_to_messages.py` |
 | 13 | Protocol conformance audit - remaining spec gaps (multimodal Parts, push delivery + durable store, extended-card wiring, streaming deviation) | Implemented in code; live gateway verification and C2 backend forwarding pending | `a2a_executor.py`, `a2a_ai_agent_utility.py`, `a2a_server.py`, `a2a_pushconfig_store.py`, `main.py`, `A2A_ARCHITECTURE.md`, `tests/test_phase13.py` - see Phase 13 |
-| 14 | A2A-native proxy handler - forward A2A requests to external A2A-compliant agents without protocol translation | Planned - mapping is staged, but handler/tests/config are not implemented yet | `a2a_ai_agent_utility.py` (mapping only), `a2a_proxy_handler.py` (planned), `config.py` (planned), `tests/test_a2a_proxy_handler.py` (planned) |
+| 14 | A2A-native proxy handler - forward A2A requests to external A2A-compliant agents without protocol translation | Implemented; live A2A backend verification pending | `a2a_proxy_handler.py`, `a2a_ai_agent_utility.py`, `tests/test_a2a_proxy_handler.py`, `README.md`, `AGENTS.md` |
 
 ## Phase 12: Conversation Grouping via contextId
 
@@ -798,26 +798,26 @@ Still pending:
 
 ## Phase 14: A2A-Native Proxy Handler
 
-**Status:** Planned - `AGENT_TYPE_MAP` contains a staged `a2a_proxy` entry, but the handler, config fields, tests, and live E2E validation are not implemented yet.
+**Status:** Implemented; live A2A backend verification pending.
 
 ### Current Checkout Status
 
-- `a2a_ai_agent_utility.py` already maps `agent_type: "a2a_proxy"` to `a2a_daemon_engine.handlers.a2a_proxy_handler.A2AProxyHandler`.
-- `handlers/a2a_proxy_handler.py` does not exist yet.
-- `tests/test_a2a_proxy_handler.py` does not exist yet.
-- `A2A_PROXY_*` settings are not wired in `Config` yet.
-- Do not register production agents with `agent_type: "a2a_proxy"` until 14.1, 14.3, 14.8, and 14.9 are complete. In the current checkout, that selection resolves to a missing module and will fail at import time.
+- `a2a_ai_agent_utility.py` maps `agent_type: "a2a_proxy"` to `a2a_daemon_engine.handlers.a2a_proxy_handler.A2AProxyHandler`.
+- `handlers/a2a_proxy_handler.py` implements non-streaming `SendMessage`, streaming `SendStreamingMessage`, `CancelTask`, and approval/input continuation forwarding.
+- `tests/test_a2a_proxy_handler.py` covers the proxy with `httpx.MockTransport`, including non-streaming, streaming, cancel, approval, metadata-only config resolution, headers, and error paths.
+- Proxy connection details are intentionally per-agent metadata only. `A2A_PROXY_*` global settings are not required because each registered agent can proxy to a different backend.
+- Remaining work is live E2E validation against a real A2A backend and final operational documentation updates.
 
 ### Motivation
 
-For Hermes Agent builds or other backends that expose a native A2A endpoint, the daemon should not translate A2A requests into a backend-specific protocol and then translate the response back again. It can act as a thin A2A-to-A2A proxy: preserve the client `Message`, `Parts`, `contextId`, task state, and streaming events, while still applying daemon-owned auth, tenant routing, persistence, task tracking, and observability.
+For Hermes Agent builds or other backends that expose a native A2A endpoint, the daemon does not need to translate A2A requests into a backend-specific protocol and then translate the response back again. The proxy handler acts as a thin A2A-to-A2A bridge: it preserves the client `Message`, `Parts`, `contextId`, task state, and streaming events while the daemon still owns auth, tenant routing, persistence, task tracking, and observability.
 
 This differs from the existing bridge handlers:
 
 - `HermesAgentHandler` translates to a Hermes/OpenAI-compatible HTTP + SSE API.
 - `CoreEngineAgentHandler` translates to `silvaengine_gateway` GraphQL and WebSocket calls.
 - `OpenClawAgentHandler` translates to the OpenClaw HTTP API.
-- `A2AProxyHandler` should forward A2A JSON-RPC and A2A SSE events to another A2A-compliant backend.
+- `A2AProxyHandler` forwards A2A JSON-RPC and A2A SSE events to another A2A-compliant backend.
 
 Benefits:
 
@@ -848,9 +848,9 @@ A2AProxyHandler
 
 ### Handler Plugin Contract
 
-The planned `A2AProxyHandler` (`handlers/a2a_proxy_handler.py`) should implement the same narrow bridge contract used by the existing Phase 10 handlers:
+`A2AProxyHandler` (`handlers/a2a_proxy_handler.py`) implements the same narrow bridge contract used by the existing Phase 10 handlers:
 
-- `__init__(logger, agent_config, setting, context, http_transport=None)` - initialize config and allow injectable HTTP/SSE transport for tests.
+- `__init__(logger, agent_config, setting, context, http_transport=None)` - initialize metadata-only proxy config and allow injectable HTTP/SSE transport for tests.
 - `ask_model(input_messages, context, stream_queue=None, stream_event=None)` - forward A2A `SendMessage` or `SendStreamingMessage` to the backend endpoint; drain backend A2A SSE events into `stream_queue` for streaming calls.
 - `cancel_run(run_id)` - forward A2A `CancelTask` to the backend.
 - `resolve_approval(run_id, approved, reason)` - send an A2A continuation `SendMessage` using the same `contextId` and approval metadata.
@@ -861,11 +861,11 @@ Selection remains per-agent via metadata:
 agent_type: "a2a_proxy"
 ```
 
-The map entry is already present, but it should be treated as staged until the handler lands:
+The map entry is active:
 
 | `agent_type` | module | class | Current status |
 |---|---|---|---|
-| `a2a_proxy` | `a2a_daemon_engine.handlers.a2a_proxy_handler` | `A2AProxyHandler` | Mapping exists; target module missing |
+| `a2a_proxy` | `a2a_daemon_engine.handlers.a2a_proxy_handler` | `A2AProxyHandler` | Implemented |
 
 ### Per-Agent Metadata
 
@@ -917,16 +917,16 @@ global env-var fallbacks, since each agent proxies to its own backend.
 
 | Task | Description | Status |
 |------|-------------|--------|
-| 14.1 | Create `a2a_proxy_handler.py` with `A2AProxyHandler` | Planned |
-| 14.2 | Add `a2a_proxy` to `AGENT_TYPE_MAP` in `a2a_ai_agent_utility.py` | Partially done - mapping exists, target module missing |
-| 14.3 | Add `A2A_PROXY_*` config fields to `Config` and `_set_parameters` | Planned |
-| 14.4 | Implement non-streaming: forward `SendMessage` JSON-RPC to backend | Planned |
-| 14.5 | Implement streaming: forward `SendStreamingMessage` and drain A2A SSE events into `stream_queue` | Planned |
-| 14.6 | Implement `cancel_run`: forward `CancelTask` JSON-RPC to backend | Planned |
-| 14.7 | Implement `resolve_approval`: send continuation `SendMessage` with approval metadata | Planned |
-| 14.8 | Write unit tests (`test_a2a_proxy_handler.py`) with mocked A2A backend | Planned |
+| 14.1 | Create `a2a_proxy_handler.py` with `A2AProxyHandler` | Done |
+| 14.2 | Add `a2a_proxy` to `AGENT_TYPE_MAP` in `a2a_ai_agent_utility.py` | Done |
+| 14.3 | Keep proxy connection details in per-agent metadata; do not add global `A2A_PROXY_*` config fields | Done |
+| 14.4 | Implement non-streaming: forward `SendMessage` JSON-RPC to backend | Done |
+| 14.5 | Implement streaming: forward `SendStreamingMessage` and drain A2A SSE events into `stream_queue` | Done |
+| 14.6 | Implement `cancel_run`: forward `CancelTask` JSON-RPC to backend | Done |
+| 14.7 | Implement `resolve_approval`: send continuation `SendMessage` with approval metadata | Done |
+| 14.8 | Write unit tests (`test_a2a_proxy_handler.py`) with mocked A2A backend | Done |
 | 14.9 | Write live E2E test against a running A2A backend such as Hermes A2A | Planned |
-| 14.10 | Update `AGENTS.md`, `README.md`, `settings.yaml`, and `.env.example` | Planned |
+| 14.10 | Update `AGENTS.md`, `README.md`, `settings.yaml`, and `.env.example` where applicable | In progress |
 
 ### Design Decisions
 
@@ -938,7 +938,7 @@ global env-var fallbacks, since each agent proxies to its own backend.
 | Keep daemon-owned task store | The daemon task is the client-visible protocol record; the backend task/run id is implementation metadata. |
 | Reuse the existing drain loop | The `stream_queue` / `stream_event` contract is already generic; the proxy handler only needs to feed normalized chunks. |
 | Support `contextId` passthrough | The daemon forwards the client's `contextId` so multi-turn conversations work end to end. |
-| Guard the staged `agent_type` mapping | The current map entry points to a missing module. Phase 14 must either land the handler with tests or guard selection so misconfigured agents fail with a clear configuration error. |
+| Metadata-only proxy config | Proxy targets are agent-specific, so global `A2A_PROXY_*` settings would create ambiguous routing and accidental cross-agent coupling. |
 
 ### Relationship to Existing Bridge Handlers
 
@@ -948,6 +948,6 @@ global env-var fallbacks, since each agent proxies to its own backend.
 | `CoreEngineAgentHandler` | Gateway GraphQL + WebSocket | `ai_agent_core_engine` via `silvaengine_gateway` |
 | `OpenClawAgentHandler` | OpenAI-compatible HTTP | OpenClaw Gateway |
 | `LLMHandler` | In-process Python | `ai_agent_core_engine` in-process |
-| `A2AProxyHandler` (planned) | A2A JSON-RPC + A2A SSE | Any backend that already exposes the A2A protocol |
+| `A2AProxyHandler` | A2A JSON-RPC + A2A SSE | Any backend that already exposes the A2A protocol |
 
-The proxy handler does not replace the existing bridge handlers. It adds a new backend option for agents that speak A2A natively. Until Phase 14 is implemented, use `agent_type: "hermes"`, `core_engine`, `openclaw`, or `llm`; do not use `agent_type: "a2a_proxy"` for runtime agents.
+The proxy handler does not replace the existing bridge handlers. It adds a new backend option for agents that speak A2A natively. Use `agent_type: "a2a_proxy"` for backends with a native A2A endpoint, and use `hermes`, `core_engine`, `openclaw`, or `llm` when the daemon still needs a backend-specific bridge.
