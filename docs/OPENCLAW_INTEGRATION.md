@@ -144,7 +144,7 @@ or `approval` chunks (OpenCLAW has neither). Set `stream_event` in `finally`.
 
 | Key | Default | Description |
 |---|---|---|
-| `module_name` | *(required)* | `a2a_daemon_engine.handlers.a2a_openclaw_handler` |
+| `module_name` | *(required)* | `a2a_daemon_engine.handlers.openclaw_handler` |
 | `class_name` | *(required)* | `OpenClawAgentHandler` |
 | `openclaw_api_url` | `http://localhost:18789` | OpenCLAW gateway base URL |
 | `openclaw_api_key` | *(empty)* | Bearer token |
@@ -180,7 +180,7 @@ Ordered; each independently verifiable. Mirrors how the Hermes bridge shipped.
 
 | # | Task |
 |---|---|
-| O.1 | `handlers/a2a_openclaw_handler.py` — `OpenClawAgentHandler` with `_ask_non_streaming` (POST chat/completions, `stream:false`) and `_ask_streaming` (POST `stream:true`, drain `delta.content` → `stream_queue` until `[DONE]`). Injectable `http_transport`. |
+| O.1 | `handlers/openclaw_handler.py` — `OpenClawAgentHandler` with `_ask_non_streaming` (POST chat/completions, `stream:false`) and `_ask_streaming` (POST `stream:true`, drain `delta.content` → `stream_queue` until `[DONE]`). Injectable `http_transport`. |
 | O.2 | Agent selection: build `model` as `openclaw/<openclaw_agent_id>` (default `"openclaw"`), or send `x-openclaw-agent-id` header, per `openclaw_agent_selector`. |
 | O.3 | `Config`: add `openclaw_*` fields + `OPENCLAW_*` env resolution, mirroring the `hermes_*` block. Extend `resolve_agent`'s metadata/env injection the same way. |
 | O.4 | `cancel_run`: best-effort local (no server call); document that OpenCLAW continues server-side. |
@@ -188,7 +188,7 @@ Ordered; each independently verifiable. Mirrors how the Hermes bridge shipped.
 | O.6 | Tests: `test_openclaw_handler.py` (unit, `httpx.MockTransport`, no services) covering non-streaming, streaming deltas, `[DONE]` termination, error, agent-id → model mapping, config resolution. Then live `test_openclaw_gateway_live.py` / `test_openclaw_sse_live.py` / `test_openclaw_chatbot.py` mirroring the Hermes live suite. |
 
 **Reuse, don't fork:** O.1's `_to_openai_messages`, header building, and the
-streaming drain contract are nearly identical to `a2a_hermes_handler.py`. Copy
+streaming drain contract are nearly identical to `hermes_handler.py`. Copy
 the structure; the only real deltas are the endpoint, the chunk parser, agent
 selection, and the absent cancel/approval.
 

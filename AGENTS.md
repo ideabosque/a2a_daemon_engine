@@ -81,8 +81,8 @@ Removed legacy surfaces - do not re-add or document as active:
 - `a2a_daemon_engine/handlers/a2a_graphql_subscriptions.py` - Phase 9 GraphQL subscription manager (live task / agent / message updates).
 - `a2a_daemon_engine/handlers/a2a_telemetry.py` - OpenTelemetry instrumentation. Optional: imports `opentelemetry.*` inside `try/except ImportError` and degrades to a no-op when the `[telemetry]` extra is not installed (`OPENTELEMETRY_AVAILABLE = False`). Activation requires `pip install -e .[telemetry]` plus `OTEL_EXPORTER_OTLP_ENDPOINT`.
 - `a2a_daemon_engine/handlers/a2a_ai_agent_utility.py` - Phase 10 bridge utility. Resolves `ai_agent_core_engine` agent config, loads the LLM handler, and invokes `ask_model` with streaming-thread bridging into A2A `EventQueue` and `SSEEventQueue`.
-- `a2a_daemon_engine/handlers/a2a_hermes_handler.py` - Hermes Agent handler. Phase 10 bridge plugin that routes A2A tasks to a Hermes Agent API Server instance via HTTP + SSE instead of in-process LLM calls. Implements `ask_model`, `cancel_run`, and `resolve_approval`.
-- `a2a_daemon_engine/handlers/a2a_core_engine_handler.py` - Core Engine Agent handler. Phase 10 bridge plugin that routes A2A tasks to `ai_agent_core_engine` via `silvaengine_gateway` using GraphQL (non-streaming) and WebSocket (streaming) transports. Implements `ask_model`, `cancel_run`, and `resolve_approval`.
+- `a2a_daemon_engine/handlers/hermes_handler.py` - Hermes Agent handler. Phase 10 bridge plugin that routes A2A tasks to a Hermes Agent API Server instance via HTTP + SSE instead of in-process LLM calls. Implements `ask_model`, `cancel_run`, and `resolve_approval`.
+- `a2a_daemon_engine/handlers/core_engine_handler.py` - Core Engine Agent handler. Phase 10 bridge plugin that routes A2A tasks to `ai_agent_core_engine` via `silvaengine_gateway` using GraphQL (non-streaming) and WebSocket (streaming) transports. Implements `ask_model`, `cancel_run`, and `resolve_approval`.
 - `a2a_daemon_engine/handlers/schema.py` - GraphQL schema definitions.
 
 ### Phase 10 Configuration
@@ -105,11 +105,11 @@ Handler resolution priority (first wins):
 
 | `agent_type` | module | class |
 |---|---|---|
-| `hermes` | `a2a_daemon_engine.handlers.a2a_hermes_handler` | `HermesAgentHandler` |
-| `core_engine` | `a2a_daemon_engine.handlers.a2a_core_engine_handler` | `CoreEngineAgentHandler` |
-| `openclaw` | `a2a_daemon_engine.handlers.a2a_openclaw_handler` | `OpenClawAgentHandler` |
+| `hermes` | `a2a_daemon_engine.handlers.hermes_handler` | `HermesAgentHandler` |
+| `core_engine` | `a2a_daemon_engine.handlers.core_engine_handler` | `CoreEngineAgentHandler` |
+| `openclaw` | `a2a_daemon_engine.handlers.openclaw_handler` | `OpenClawAgentHandler` |
 | `llm` | `ai_agent_core_engine.handlers.llm_handler` | `LLMHandler` |
-| `a2a_proxy` | `a2a_daemon_engine.handlers.a2a_a2a_proxy_handler` | `A2AProxyHandler` |
+| `a2a_proxy` | `a2a_daemon_engine.handlers.a2a_proxy_handler` | `A2AProxyHandler` |
 
 Startup flag `Config.phase10_available` is `True` only when both `ai_agent_core_engine` is importable and `Config.a2a_core` is initialized.
 
@@ -119,7 +119,7 @@ and `stream` / `streaming`.
 
 ### Hermes Agent Handler
 
-When `module_name` = `a2a_daemon_engine.handlers.a2a_hermes_handler` and
+When `module_name` = `a2a_daemon_engine.handlers.hermes_handler` and
 `class_name` = `HermesAgentHandler`, the Phase 10 bridge routes A2A tasks to
 a running Hermes Agent API Server instance via HTTP + SSE.
 
@@ -156,7 +156,7 @@ See `docs/HERMES_INTEGRATION.md` for the full setup guide, A2A state mapping, an
 
 ### Core Engine Agent Handler
 
-When `module_name` = `a2a_daemon_engine.handlers.a2a_core_engine_handler` and
+When `module_name` = `a2a_daemon_engine.handlers.core_engine_handler` and
 `class_name` = `CoreEngineAgentHandler`, the Phase 10 bridge routes A2A tasks
 to `ai_agent_core_engine` through `silvaengine_gateway` using its public
 transport contracts — **GraphQL** for non-streaming and **WebSocket** for
@@ -201,7 +201,7 @@ Injectable transports for testing: `ws_connect` factory + `graphql_client`
 ### A2A Proxy Handler
 
 When `agent_type` = `a2a_proxy` (or `module_name` =
-`a2a_daemon_engine.handlers.a2a_a2a_proxy_handler` and `class_name` =
+`a2a_daemon_engine.handlers.a2a_proxy_handler` and `class_name` =
 `A2AProxyHandler`), the Phase 14 bridge forwards A2A requests **directly** to
 any A2A-compliant backend — no protocol translation. Targets include Hermes
 Agent's A2A server (`:9900`), LangChain, CrewAI, and Google ADK agents.

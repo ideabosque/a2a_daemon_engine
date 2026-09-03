@@ -66,7 +66,7 @@ OPENCLAW_AGENT_SELECTOR = env.get("OPENCLAW_AGENT_SELECTOR", "model")
 # Register agent via direct SQL
 # ---------------------------------------------------------------------------
 METADATA = json.dumps({
-    "module_name": "a2a_daemon_engine.handlers.a2a_openclaw_handler",
+    "module_name": "a2a_daemon_engine.handlers.openclaw_handler",
     "class_name": "OpenClawAgentHandler",
     "openclaw_api_url": OPENCLAW_API_URL,
     "openclaw_api_key": OPENCLAW_API_KEY,

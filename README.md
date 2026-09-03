@@ -142,9 +142,9 @@ a2a_daemon_engine/
 │   │   ├── a2a_core.py                  # GraphQL handler for agents/tasks/messages/settings + conversation history
 │   │   ├── a2a_utility.py              # DynamoDB query/mutation helpers
 │   │   ├── a2a_ai_agent_utility.py      # Phase 10 bridge — agent resolution, AGENT_TYPE_MAP, streaming, persistence
-│   │   ├── a2a_hermes_handler.py        # Hermes Agent bridge plugin (HTTP + SSE)
-│   │   ├── a2a_core_engine_handler.py   # Core Engine bridge plugin (GraphQL + WebSocket)
-│   │   ├── a2a_openclaw_handler.py      # OpenClaw bridge plugin (OpenAI-compatible HTTP)
+│   │   ├── hermes_handler.py        # Hermes Agent bridge plugin (HTTP + SSE)
+│   │   ├── core_engine_handler.py   # Core Engine bridge plugin (GraphQL + WebSocket)
+│   │   ├── openclaw_handler.py      # OpenClaw bridge plugin (OpenAI-compatible HTTP)
 │   │   ├── a2a_pushconfig.py           # Push notification config + SSRF allowlist
 │   │   ├── a2a_pushconfig_store.py      # Durable push config store (PG-backed)
 │   │   ├── a2a_extended_card.py          # Extended agent card with auth gating
@@ -417,11 +417,11 @@ of backend.
 
 | `agent_type` | module | class | Transport |
 |---|---|---|---|
-| `hermes` | `a2a_hermes_handler` | `HermesAgentHandler` | HTTP + SSE to Hermes API Server |
-| `core_engine` | `a2a_core_engine_handler` | `CoreEngineAgentHandler` | GraphQL + WebSocket to `ai_agent_core_engine` |
-| `openclaw` | `a2a_openclaw_handler` | `OpenClawAgentHandler` | OpenAI-compatible HTTP to OpenClaw Gateway |
+| `hermes` | `hermes_handler` | `HermesAgentHandler` | HTTP + SSE to Hermes API Server |
+| `core_engine` | `core_engine_handler` | `CoreEngineAgentHandler` | GraphQL + WebSocket to `ai_agent_core_engine` |
+| `openclaw` | `openclaw_handler` | `OpenClawAgentHandler` | OpenAI-compatible HTTP to OpenClaw Gateway |
 | `llm` | `ai_agent_core_engine.handlers.llm_handler` | `LLMHandler` | In-process LLM |
-| `a2a_proxy` | `a2a_a2a_proxy_handler` | `A2AProxyHandler` | A2A protocol to any A2A-compliant backend |
+| `a2a_proxy` | `a2a_proxy_handler` | `A2AProxyHandler` | A2A protocol to any A2A-compliant backend |
 
 ### Hermes Agent Handler
 

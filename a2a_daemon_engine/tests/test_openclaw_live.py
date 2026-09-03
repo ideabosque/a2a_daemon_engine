@@ -31,7 +31,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from a2a_daemon_engine.handlers.a2a_openclaw_handler import OpenClawAgentHandler
+from a2a_daemon_engine.handlers.openclaw_handler import OpenClawAgentHandler
 
 __author__ = "bibow"
 
@@ -59,7 +59,7 @@ def live_agent_config():
         "agent_id": "openclaw-agent",
         "agent_name": "OpenCLAW Agent",
         "metadata": {
-            "module_name": "a2a_daemon_engine.handlers.a2a_openclaw_handler",
+            "module_name": "a2a_daemon_engine.handlers.openclaw_handler",
             "class_name": "OpenClawAgentHandler",
             "openclaw_api_url": OPENCLAW_API_URL,
             "openclaw_api_key": OPENCLAW_API_KEY,
