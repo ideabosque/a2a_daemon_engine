@@ -346,6 +346,12 @@ class CoreEngineAgentHandler:
         run_id = ""
         chunks: list[str] = []
         stream_error: str | None = None
+        # On the first turn the inbound thread_uuid is empty; the core engine
+        # CREATES a thread and reports its id on the stream frames (same field
+        # chat_websocket.py reads). Capture it so the reply can carry the real
+        # contextId back — otherwise every turn opens a new thread and the agent
+        # re-greets instead of continuing the conversation.
+        resolved_thread_uuid = thread_uuid
         try:
             # Build the WebSocket URI
             ws_uri = self._build_ws_uri()
@@ -390,6 +396,11 @@ class CoreEngineAgentHandler:
                 if message is None:
                     break
 
+                # Any frame may carry the server-resolved thread_uuid; keep the
+                # latest so a first-turn (thread-creating) run resolves it.
+                if message.get("thread_uuid"):
+                    resolved_thread_uuid = message["thread_uuid"]
+
                 if "chunk_delta" in message:
                     delta = message.get("chunk_delta", "")
                     is_end = message.get("is_message_end", False)
@@ -427,6 +438,11 @@ class CoreEngineAgentHandler:
                     result_data = message.get("result", {})
                     if isinstance(result_data, dict):
                         run_id = result_data.get("run_id", "") or result_data.get("current_run_uuid", "")
+                        resolved_thread_uuid = (
+                            result_data.get("thread_uuid")
+                            or result_data.get("threadUuid")
+                            or resolved_thread_uuid
+                        )
                     break
 
             full_content = "".join(chunks)
@@ -436,7 +452,7 @@ class CoreEngineAgentHandler:
                 "content": full_content,
                 "role": "agent",
                 "metadata": {
-                    "thread_uuid": thread_uuid,
+                    "thread_uuid": resolved_thread_uuid,
                     "run_id": run_id,
                 },
             }
