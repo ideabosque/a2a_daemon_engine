@@ -182,7 +182,34 @@ class DynamoDBA2ATaskStore(TaskStore):
                 return None
 
             # Convert dict to Task object
-            return self._dict_to_task(task_dict)
+            task = self._dict_to_task(task_dict)
+            # Canonical interface: never let a raw dict escape to the SDK —
+            # ActiveTask/TaskManager access ``task.status`` unconditionally and
+            # an AttributeError here surfaced as a -32603 wrapper on
+            # tasks/cancel and tasks/get (DEF-002 symptom). With the DEF-006
+            # fix every row constructs a Task; this guard keeps the contract
+            # even if construction fails.
+            if not isinstance(task, Task):
+                status_value = task_dict.get("status", "SUBMITTED")
+                if isinstance(status_value, str):
+                    task_status = TaskStatus(
+                        state=self._map_status_to_taskstate(status_value)
+                    )
+                else:
+                    task_status = TaskStatus(state=_task_state("SUBMITTED"))
+                task = Task(
+                    id=task_dict.get("id") or task_dict.get("taskId") or task_id,
+                    status=task_status,
+                    context_id=(
+                        task_dict.get("context_id")
+                        or task_dict.get("contextId")
+                        or task_dict.get("sessionId")
+                    ),
+                    metadata=dict(task_dict.get("metadata") or {}),
+                    history=task_dict.get("history", []),
+                    artifacts=task_dict.get("artifacts", []),
+                )
+            return task
 
         except Exception as e:
             self.logger.error(f"Failed to get task {task_id}: {e}")
@@ -330,15 +357,31 @@ class DynamoDBA2ATaskStore(TaskStore):
             task_status = TaskStatus(state=_task_state("SUBMITTED"))
 
         # Otherwise, construct proper Task object
-        # Map DynamoDB fields to Task fields
+        # Map DynamoDB fields to Task fields.
+        # DEF-006 fix (2026-09-03): the A2A v1.0 proto ``Task`` has fields
+        # id/context_id/status/artifacts/history/metadata only — there is NO
+        # ``kind`` field. Setting "kind" here made ``Task(**task_data)`` raise
+        # for every row (``Protocol message Task has no "kind" field``), the
+        # row fell back to a dict, and ``list()`` dropped every non-Task entry
+        # — ``tasks/list`` therefore returned zero tasks regardless of store
+        # contents. The task type is preserved under ``metadata["taskType"]``
+        # so nothing is lost; it round-trips back to taskType in
+        # ``_task_to_dict``.
+        task_metadata = dict(task_dict.get("metadata") or {})
+        task_type = (
+            task_dict.get("kind")
+            or task_dict.get("taskType")
+            or task_dict.get("task_type")
+        )
+        if task_type:
+            task_metadata.setdefault("taskType", task_type)
         task_data = {
             "id": task_dict.get("id") or task_dict.get("taskId"),
             "status": task_status,
-            "kind": task_dict.get("kind") or task_dict.get("taskType"),
             "context_id": task_dict.get("context_id")
             or task_dict.get("contextId")
             or task_dict.get("sessionId"),
-            "metadata": task_dict.get("metadata", {}),
+            "metadata": task_metadata,
             "history": task_dict.get("history", []),
             "artifacts": task_dict.get("artifacts", []),
         }
@@ -412,13 +455,18 @@ class DynamoDBA2ATaskStore(TaskStore):
             "updated_at": pendulum.now("UTC").to_iso8601_string(),
         }
 
-        # Add optional fields if present
-        if hasattr(task, "kind") and task.kind:
-            task_dict["taskType"] = task.kind
+        # Add optional fields if present.
+        # DEF-006 round-trip: proto Task has no ``kind``; the task type rides
+        # in metadata["taskType"] (set by _dict_to_task). ``hasattr(task,
+        # "kind")`` is False for proto Tasks, so the old branch never fired
+        # and taskType was lost on save — pull it from metadata instead.
+        if hasattr(task, "metadata") and task.metadata:
+            md = dict(task.metadata)
+            task_dict["metadata"] = md
+            if md.get("taskType"):
+                task_dict["taskType"] = md["taskType"]
         if hasattr(task, "context_id") and task.context_id:
             task_dict["sessionId"] = task.context_id
-        if hasattr(task, "metadata") and task.metadata:
-            task_dict["metadata"] = task.metadata
         if hasattr(task, "history") and task.history:
             task_dict["history"] = task.history
         if hasattr(task, "artifacts") and task.artifacts:

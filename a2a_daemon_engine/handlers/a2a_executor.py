@@ -24,7 +24,15 @@ from typing import Any
 # https://github.com/a2aproject/a2a-samples/blob/main/samples/python/agents/travel_planner_agent/agent_executor.py
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
-from a2a.types import Message, Part, Role, TaskState, TaskStatus, TaskStatusUpdateEvent
+from a2a.types import (
+    Message,
+    Part,
+    Role,
+    Task,
+    TaskState,
+    TaskStatus,
+    TaskStatusUpdateEvent,
+)
 
 try:
     from a2a.utils import new_agent_text_message
@@ -224,6 +232,49 @@ async def _emit_event(event_queue: EventQueue, event: Any) -> None:
     await event_queue.put(event)
 
 
+def _stamp_message_ids(message: Any, task_id: str | None) -> Any:
+    """Attach the tracking ids to a reply ``Message`` (DEF-005 fix).
+
+    The proto ``Message`` carries ``task_id`` (``taskId``) and ``context_id``
+    fields; ``message/send`` returns that Message verbatim to the caller, so
+    stamping the SDK-generated ids here is what makes the reply trackable
+    (``tasks/get``) and resumable (echo ``taskId``/``contextId`` back on the
+    next ``send_a2a_message``). Best-effort: silently skips SDK variants
+    without the fields.
+    """
+    if message is None or not task_id:
+        return message
+    try:
+        message.task_id = task_id
+    except Exception:  # pragma: no cover - SDK variants without the field
+        pass
+    return message
+
+
+def _agent_error_task_event(
+    task_id: str | None,
+    context_id: str | None,
+    state_name: str = "FAILED",
+) -> Any:
+    """Emit a terminal **Task** event carrying the routing ids (DEF-004 fix).
+
+    When the daemon cannot resolve/execute the addressed agent (e.g. an
+    unknown ``agent_id``), a plain reply Message made the failure look like a
+    successful answer — callers could not distinguish it structurally (filed
+    as DEF-004). Emitting a full ``Task`` with a ``FAILED`` state is the only
+    structurally failed shape the SDK's message/send consumer accepts
+    (``ActiveTask`` persists the Task via ``save_task_event`` and
+    ``on_message_send`` returns it as the result). A bare
+    ``TaskStatusUpdateEvent`` is rejected ("Agent should enqueue Task before
+    TaskStatusUpdateEvent event").
+    """
+    return Task(
+        id=task_id or "",
+        context_id=context_id or "",
+        status=TaskStatus(state=_task_state(state_name)),
+    )
+
+
 def _context_get(request_context: RequestContext, key: str, default: Any = None) -> Any:
     """Read custom context values across supported A2A SDK RequestContext versions."""
     if request_context is None:
@@ -234,6 +285,13 @@ def _context_get(request_context: RequestContext, key: str, default: Any = None)
 
     if hasattr(request_context, "get"):
         return request_context.get(key, default)
+
+    # Direct RequestContext attributes (SDK v2): task_id / context_id /
+    # tenant live as fields on the object, not inside call_context.state.
+    if hasattr(request_context, key):
+        value = getattr(request_context, key)
+        if value is not None:
+            return value
 
     call_context = getattr(request_context, "call_context", None)
     state = getattr(call_context, "state", None)
@@ -545,11 +603,21 @@ class A2ADaemonExecutor(AgentExecutor):
             if input_data_parts:
                 input_data["input_data_parts"] = input_data_parts
 
+            # DEF-009 fix (2026-09-03): persist the daemon task record under
+            # the SDK-generated task_id when one exists (RequestContext.task_id
+            # — the same id stamped on the reply per DEF-005). Using one id
+            # everywhere keeps tasks/get, reply.task_id, and the
+            # a2a_messages.task_id link consistent; the repo auto-generates an
+            # id only when the SDK did not provide one.
+            task_id = _context_get_any(
+                request_context, "task_id", "taskId", default=""
+            ) or ""
             # Persist task (in_progress)
             if hasattr(self.config.a2a_core, "insert_update_a2a_task"):
                 try:
                     task_result = await self.config.a2a_core.insert_update_a2a_task(
                         partition_key=partition_key,
+                        task_id=task_id or None,
                         task_type=task_type,
                         assigned_agent_id=agent_uuid or "",
                         status="in_progress",
@@ -584,38 +652,82 @@ class A2ADaemonExecutor(AgentExecutor):
                     "thread_uuid"
                 )
 
+                # DEF-005 fix (2026-09-03): the SDK request handler generates
+                # a real task_id per message/send (RequestContext.task_id).
+                # The daemon's own persistence may carry a different id
+                # (repo auto-generated); when they diverge, reconcile by
+                # writing the completion under the SDK id — that is the id
+                # stamped on the reply and the one the caller will poll with
+                # tasks/get.
+                sdk_task_id = _context_get_any(
+                    request_context, "task_id", "taskId", default=""
+                )
+                reply_task_id = sdk_task_id or task_id
+                if not effective_context_id:
+                    effective_context_id = _context_get_any(
+                        request_context, "context_id", "contextId", default=""
+                    ) or None
+
                 if result.error:
-                    await _emit_event(
-                        event_queue,
-                        _agent_text_message(
+                    if "agent not found" in str(result.error).lower():
+                        # DEF-004 fix: structurally failed response — a FAILED
+                        # Task event is the only failed shape the SDK's
+                        # message/send consumer accepts; it persists via
+                        # save_task_event and is returned to the caller.
+                        await _emit_event(
+                            event_queue,
+                            _agent_error_task_event(
+                                reply_task_id, effective_context_id, "FAILED"
+                            ),
+                        )
+                    else:
+                        reply = _agent_text_message(
                             f"AI agent error: {result.error}", effective_context_id
-                        ),
-                    )
+                        )
+                        await _emit_event(
+                            event_queue, _stamp_message_ids(reply, reply_task_id)
+                        )
                 else:
+                    reply = _agent_parts_message(
+                        text=result.content,
+                        files=result.output_files,
+                        context_id=effective_context_id,
+                    )
+                    # Stamp the reply Message with the tracking id so the
+                    # client can call tasks/get and resume. Success branch
+                    # only — the SDK rejects a second Message.
                     await _emit_event(
-                        event_queue,
-                        _agent_parts_message(
-                            text=result.content,
-                            files=result.output_files,
-                            context_id=effective_context_id,
-                        ),
+                        event_queue, _stamp_message_ids(reply, reply_task_id)
                     )
 
-                # Update task status
+                # Update task status. Write the completion under the SDK
+                # task_id (the one the caller sees) — the in_progress row was
+                # created with the repo-generated id, so update BOTH when they
+                # diverge, keeping the task store consistent with the reply.
                 if hasattr(self.config.a2a_core, "insert_update_a2a_task"):
-                    try:
-                        await self.config.a2a_core.insert_update_a2a_task(
-                            partition_key=partition_key,
-                            task_id=task_id,
-                            task_type="message_response",
-                            assigned_agent_id=agent_uuid or "",
-                            status="failed" if result.error else "completed",
-                            output_data={"content": result.content[:500]} if result.content else None,
-                            context_id=effective_context_id,
-                            updated_by="a2a_daemon",
-                        )
-                    except Exception as e:
-                        self.logger.warning(f"A2A task completion persist failed: {e}")
+                    for persist_task_id in {t for t in (task_id, reply_task_id) if t}:
+                        try:
+                            await self.config.a2a_core.insert_update_a2a_task(
+                                partition_key=partition_key,
+                                task_id=persist_task_id,
+                                task_type="message_response",
+                                assigned_agent_id=agent_uuid or "",
+                                status=(
+                                    "failed" if result.error else "completed"
+                                ),
+                                output_data=(
+                                    {"content": result.content[:500]}
+                                    if result.content
+                                    else None
+                                ),
+                                context_id=effective_context_id,
+                                updated_by="a2a_daemon",
+                            )
+                        except Exception as e:
+                            self.logger.warning(
+                                f"A2A task completion persist failed "
+                                f"({persist_task_id}): {e}"
+                            )
                 return
             except Exception as e:
                 self.logger.warning(
