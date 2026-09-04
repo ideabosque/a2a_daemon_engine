@@ -64,8 +64,14 @@ def _normalize_params_for_proto(params: dict[str, Any]) -> dict[str, Any]:
         }
         message["role"] = role_map.get(role.lower(), role)
 
-    if "sessionId" in normalized and "contextId" not in message and "context_id" not in message:
-        message["contextId"] = normalized["sessionId"]
+    for context_key in ("contextId", "context_id", "sessionId", "session_id"):
+        if (
+            context_key in normalized
+            and "contextId" not in message
+            and "context_id" not in message
+        ):
+            message["contextId"] = normalized[context_key]
+            break
 
     parts = message.get("parts", [])
     if isinstance(parts, list):

@@ -151,11 +151,17 @@ class A2AServerCallContextBuilder(DefaultServerCallContextBuilder):
             ("agent_id", "agent_uuid"),
             ("threadId", "thread_uuid"),
             ("thread_id", "thread_uuid"),
+            ("contextId", "context_id"),
+            ("context_id", "context_id"),
+            ("sessionId", "context_id"),
+            ("session_id", "context_id"),
             ("runId", "run_uuid"),
             ("run_id", "run_uuid"),
         ):
             if source_key in params and target_key not in metadata:
                 metadata[target_key] = params[source_key]
+            if source_key in message and target_key not in metadata:
+                metadata[target_key] = message[source_key]
             if source_key in metadata and target_key not in metadata:
                 metadata[target_key] = metadata[source_key]
 

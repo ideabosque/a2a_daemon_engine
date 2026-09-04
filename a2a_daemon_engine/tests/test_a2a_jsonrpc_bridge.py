@@ -54,3 +54,25 @@ def test_build_jsonrpc_sdk_request_normalizes_proto_message_send() -> None:
     assert request.message.context_id == "session-1"
     assert request.message.message_id.startswith("msg-")
     assert request.message.parts[0].text == "Hello"
+
+
+def test_build_jsonrpc_sdk_request_promotes_top_level_context_id() -> None:
+    from a2a.types import SendMessageRequest
+
+    request = build_jsonrpc_sdk_request(
+        SendMessageRequest,
+        {
+            "jsonrpc": "2.0",
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "Hello"}],
+                },
+                "contextId": "thread-1",
+            },
+            "id": 1,
+        },
+    )
+
+    assert request.message.context_id == "thread-1"

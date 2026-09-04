@@ -16,6 +16,8 @@ from a2a.types import TaskState
 
 from a2a_daemon_engine.handlers.a2a_executor import (
     A2ADaemonExecutor,
+    _context_get_any,
+    _context_state_get_any,
     _task_state,
 )
 
@@ -37,6 +39,25 @@ class TestTaskStateHelper:
         """Test that invalid states raise AttributeError."""
         with pytest.raises(AttributeError):
             _task_state("INVALID_STATE")
+
+
+class TestRequestContextHelpers:
+    def test_state_helper_ignores_sdk_generated_context_id(self):
+        context = Mock(spec=RequestContext)
+        context.context_id = "sdk-generated-context"
+        context.call_context = Mock()
+        context.call_context.state = {"agent_uuid": "core-engine-agent"}
+
+        assert _context_get_any(context, "context_id") == "sdk-generated-context"
+        assert _context_state_get_any(context, "context_id", "contextId") is None
+
+    def test_state_helper_reads_explicit_context_id_from_call_state(self):
+        context = Mock(spec=RequestContext)
+        context.context_id = "explicit-thread"
+        context.call_context = Mock()
+        context.call_context.state = {"context_id": "explicit-thread"}
+
+        assert _context_state_get_any(context, "context_id", "contextId") == "explicit-thread"
 
 
 class TestA2ADaemonExecutor:
