@@ -314,6 +314,38 @@ def _context_get_any(
     return default
 
 
+def _context_state_get(request_context: RequestContext, key: str, default: Any = None) -> Any:
+    """Read only caller-supplied state captured before SDK id generation."""
+    if request_context is None:
+        return default
+
+    if isinstance(request_context, dict):
+        state = request_context.get("state")
+        if isinstance(state, dict) and key in state:
+            return state[key]
+        return request_context.get(key, default)
+
+    call_context = getattr(request_context, "call_context", None)
+    state = getattr(call_context, "state", None)
+    if isinstance(state, dict) and key in state:
+        return state[key]
+
+    return default
+
+
+def _context_state_get_any(
+    request_context: RequestContext | None,
+    *keys: str,
+    default: Any = None,
+) -> Any:
+    """Return the first caller-supplied state value across naming variants."""
+    for key in keys:
+        value = _context_state_get(request_context, key, default=None)
+        if value is not None:
+            return value
+    return default
+
+
 def _truthy_option(value: Any) -> bool:
     """Interpret boolean-like request options from JSON clients."""
     if isinstance(value, bool):
@@ -593,6 +625,20 @@ class A2ADaemonExecutor(AgentExecutor):
                 "session_id",
                 "sessionId",
             )
+            explicit_thread_uuid = _context_state_get_any(
+                request_context,
+                "thread_uuid",
+                "threadId",
+                "thread_id",
+            )
+            explicit_context_id = _context_state_get_any(
+                request_context,
+                "context_id",
+                "contextId",
+                "session_id",
+                "sessionId",
+            )
+            core_thread_uuid = explicit_thread_uuid or explicit_context_id
 
             # Capture any inbound file/data parts so they are recorded rather
             # than dropped (Phase 13, C2).
@@ -642,7 +688,7 @@ class A2ADaemonExecutor(AgentExecutor):
                     partition_key=partition_key,
                     agent_uuid=agent_uuid,
                     user_query=user_input,
-                    thread_uuid=context_id,
+                    thread_uuid=core_thread_uuid,
                     logger=self.logger,
                     task_id=task_id,
                 )
@@ -801,7 +847,7 @@ class A2ADaemonExecutor(AgentExecutor):
                 "agentId",
                 "agent_id",
             )
-            thread_uuid = _context_get_any(
+            thread_uuid = _context_state_get_any(
                 request_context,
                 "thread_uuid",
                 "threadId",
@@ -826,7 +872,14 @@ class A2ADaemonExecutor(AgentExecutor):
                 "session_id",
                 "sessionId",
             )
-            thread_uuid = thread_uuid or context_id
+            explicit_context_id = _context_state_get_any(
+                request_context,
+                "context_id",
+                "contextId",
+                "session_id",
+                "sessionId",
+            )
+            thread_uuid = thread_uuid or explicit_context_id
             streaming = _streaming_requested(request_context, task_data)
             if streaming and not getattr(self.config, "a2a_streaming_enabled", True):
                 self.logger.info(
