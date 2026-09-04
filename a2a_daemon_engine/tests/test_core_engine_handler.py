@@ -256,6 +256,63 @@ class TestStreaming:
         names = [c["name"] for c in chunks]
         assert names.count("token") == 3  # "Hello ", "World!", ""
 
+    def test_streaming_captures_engine_thread_uuid_first_turn(
+        self, logger, base_agent_config
+    ):
+        """First turn: no inbound thread_uuid; the engine creates one and
+        reports it on the stream frames. The handler must return that id in
+        metadata so the reply carries the real contextId (else every turn
+        opens a new thread and the agent re-greets)."""
+        engine_thread = "6486a67b-74ea-4659-98c3-dfe79aa21af7"
+        frames = [
+            json.dumps({"type": "connection_ack", "connection_id": "c1"}),
+            json.dumps({
+                "chunk_delta": "Hi", "thread_uuid": engine_thread,
+                "is_message_end": False,
+            }),
+            json.dumps({"chunk_delta": "", "is_message_end": True}),
+            json.dumps({"result": {"run_id": "run-xyz", "thread_uuid": engine_thread}}),
+        ]
+        mock_ws = MockWebSocket(frames)
+        handler = _make_handler(
+            logger, base_agent_config, ws_connect=lambda uri: mock_ws
+        )
+        q = queue.Queue()
+        ev = threading.Event()
+        result = handler.ask_model(
+            input_messages=[{"role": "user", "content": "Hello"}],
+            # No thread_uuid in context — this is the first turn.
+            context={"endpoint_id": "gpt", "part_id": "nestaging", "agent_uuid": "a-1"},
+            stream_queue=q,
+            stream_event=ev,
+        )
+        assert result["metadata"]["thread_uuid"] == engine_thread
+
+    def test_streaming_reuses_inbound_thread_uuid(self, logger, base_agent_config):
+        """Later turns: the inbound thread_uuid is echoed back in metadata."""
+        inbound = "existing-thread-123"
+        frames = [
+            json.dumps({"type": "connection_ack", "connection_id": "c1"}),
+            json.dumps({"chunk_delta": "ok", "is_message_end": True}),
+            json.dumps({"result": {"run_id": "r1"}}),
+        ]
+        mock_ws = MockWebSocket(frames)
+        handler = _make_handler(
+            logger, base_agent_config, ws_connect=lambda uri: mock_ws
+        )
+        q = queue.Queue()
+        ev = threading.Event()
+        result = handler.ask_model(
+            input_messages=[{"role": "user", "content": "more"}],
+            context={
+                "endpoint_id": "gpt", "part_id": "nestaging",
+                "agent_uuid": "a-1", "thread_uuid": inbound,
+            },
+            stream_queue=q,
+            stream_event=ev,
+        )
+        assert result["metadata"]["thread_uuid"] == inbound
+
     def test_streaming_token_deltas(self, logger, base_agent_config):
         frames = [
             json.dumps({"type": "connection_ack", "connection_id": "c1"}),

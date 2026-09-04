@@ -924,7 +924,13 @@ async def execute_ai_agent_streaming(
 
     # 7. Drain loop with dual-path emission
     state = StreamingState()
-    sse_task_id = run_uuid or thread_uuid or task_id or "streaming-task"
+    # SSE events are scoped by this id and clients filter on it. It MUST be the
+    # per-turn task_id the client sent (and knows up front) — not thread_uuid,
+    # which is the same for every turn in a conversation, so once a thread is
+    # adopted (turn 2+) a thread_uuid-based id would match no single turn and the
+    # client would see no live tokens (only the final HTTP text). Prefer the
+    # client task_id; fall back to run/thread only when no task_id was provided.
+    sse_task_id = task_id or run_uuid or thread_uuid or "streaming-task"
 
     try:
         start_time = time.monotonic()
@@ -1043,13 +1049,23 @@ async def execute_ai_agent_streaming(
 
             result.message_id = f"msg-{_uuid.uuid4().hex}"
 
+        # The backend may have created the thread on this turn and returned its
+        # id in metadata; that resolved id is the conversation's contextId. Fall
+        # back to the inbound thread_uuid when the backend didn't report one.
+        effective_thread_uuid = thread_uuid or result.metadata.get("thread_uuid")
+
         # Emit the single accumulated agent Message to the SDK EventQueue.
         # This must be one Message only — the A2A SDK v2 raises
         # InvalidAgentResponseError if multiple Message objects are emitted.
         # Status events (WORKING/COMPLETED) are NOT emitted to the SDK
         # EventQueue because on_message_send rejects TaskStatusUpdateEvent.
+        # Stamp the reply with the resolved thread id so the client learns the
+        # contextId to echo back on the next turn (otherwise the backend opens a
+        # fresh thread every turn and re-greets).
         if final_content:
-            await _emit_to_sdk(event_queue, final_content, _logger, context_id=thread_uuid)
+            await _emit_to_sdk(
+                event_queue, final_content, _logger, context_id=effective_thread_uuid
+            )
 
         # Emit final status to SSE only (not SDK EventQueue)
         await _emit_status_to_sse(
@@ -1057,10 +1073,11 @@ async def execute_ai_agent_streaming(
             partition_key=partition_key,
         )
 
-        # Persist
+        # Persist under the resolved thread id so the conversation record links
+        # to the backend's real thread (not None on the first turn).
         await _persist_thread_run_message(
             partition_key=partition_key,
-            thread_uuid=thread_uuid,
+            thread_uuid=effective_thread_uuid,
             run_uuid=run_uuid,
             message_id=result.message_id,
             role=result.role,
