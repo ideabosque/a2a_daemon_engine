@@ -371,6 +371,24 @@ class A2ADaemonEngine(Graphql):
                 }
             )
         except Exception as e:
+            # DEF-003 fix (2026-09-03): typed SDK errors (TaskNotFoundError,
+            # TaskNotCancelableError, ...) carry semantic JSON-RPC codes via
+            # the SDK's JSON_RPC_ERROR_CODE_MAP (e.g. -32001 for task-not-
+            # found). Flattening every failure to -32603 made clients see
+            # A2A_INTERNAL_ERROR for an unknown task id. Map typed errors to
+            # their code; keep -32603 for everything else.
+            from .handlers.a2a_jsonrpc_bridge import jsonrpc_error_response
+
+            try:
+                from a2a.utils.errors import A2AError, JSON_RPC_ERROR_CODE_MAP
+
+                if isinstance(e, A2AError):
+                    code = JSON_RPC_ERROR_CODE_MAP.get(type(e), -32603)
+                    return _dumps(
+                        jsonrpc_error_response(code, str(e), params.get("id"))
+                    )
+            except ImportError:
+                pass
             self.logger.error(f"Error handling JSON-RPC: {e}", exc_info=True)
             return _dumps(
                 {
@@ -453,6 +471,25 @@ class A2ADaemonEngine(Graphql):
             if url.endswith(marker):
                 return f"{url[: -len(marker)].rstrip('/')}/a2a"
             return url.rstrip("/")
+
+        # DEF-008 fix (2026-09-03): the gateway forwards request headers
+        # (params["headers"], lowercased) on every dispatch — including GET
+        # agent-card requests, which carry no JSON body. Derive the public
+        # endpoint URL from the request Host instead of falling back to the
+        # daemon's own bind port (8001), so the card advertises the URL the
+        # caller actually used.
+        headers = (
+            params.get("headers") if isinstance(params.get("headers"), dict) else {}
+        )
+        host = headers.get("host")
+        if host:
+            scheme = (
+                "https" if headers.get("x-forwarded-proto") == "https" else "http"
+            )
+            base = f"{scheme}://{host}"
+            if endpoint_id:
+                return f"{base}/{endpoint_id}/a2a"
+            return base
 
         fallback = (
             self.setting.get("a2a_server_url")
